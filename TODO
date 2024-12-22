@@ -1,0 +1,18 @@
+**TODO: WhatsApp Automation for Chat History Analysis**
+
+**Current State:**
+
+- [x] Locate chats
+- [x] Click on chats
+- [x] Scroll through the chat list
+
+**Next Steps:**
+
+- [ ] Scroll up through the message history within a chat
+- [ ] Build a DataFrame with the following columns:
+  - Message text
+  - Date
+  - Sender (who sent the message)
+  - Whether it's an image or not
+  - If it's an image, save its path
+- [ ] Save the DataFrame to a CSV file

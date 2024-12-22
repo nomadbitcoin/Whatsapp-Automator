@@ -1,0 +1,7 @@
+.vs
+.idea
+__pycache__
+logs/*
+data/*
+chrome-data
+venv
