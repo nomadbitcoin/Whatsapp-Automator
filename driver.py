@@ -15,6 +15,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from undetected_chromedriver import Chrome
 from webdriver_manager.chrome import ChromeDriverManager
+
+import tempfile
+import shutil
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -30,19 +33,33 @@ class Bot:
     def __init__(self):
         # Configure Chrome options
         options = Options()
+
         # Use a specific Chrome user profile to save the session
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
         options.add_argument("--disable-extensions")
         options.add_argument("--disable-infobars")
-        # options.add_argument(f"--user-data-dir=/Users/nomadbitcoin/Projects/Agents/Whatsapp-Automator/chrome-data")
+
         options.add_argument(
-            f"--user-data-dir={os.getenv('CHROME_DATA_DIR')}")
+            f"--user-data-dir={os.path.join(os.getcwd(), 'chrome-data')}")
+        # TODO mudar para DOWNLOAD_DIR
+        self.TEMP_DIR = os.path.join(os.path.expanduser('~'), 'Downloads')
+        options.add_argument(f"--download.default_directory={self.TEMP_DIR}")
+        options.add_argument("--download.prompt_for_download=false")
+        options.add_argument("--download.directory_upgrade=true")
+        options.add_argument("--safebrowsing.enabled=true")
 
         # Initialize the undetected Chrome driver with custom options
         self.driver = Chrome(service=ChromeService(
             ChromeDriverManager().install()), options=options)
+
+        # Configure download settings using CDP
+        self.driver.execute_cdp_cmd('Page.setDownloadBehavior', {
+            'behavior': 'allow',
+            'downloadPath': self.TEMP_DIR
+        })
+
         self._message = None
         self._csv_numbers = None
         self._options = [False, False]  # [include_names, include_media]
@@ -131,6 +148,7 @@ class Bot:
         Closes the WebDriver session and quits the browser.
         """
         if self.driver:
+            shutil.rmtree(self.TEMP_DIR)  # Limpar diretório temporário
             self.driver.quit()
             print(Fore.YELLOW, "Driver closed successfully.", Style.RESET_ALL)
 

@@ -1,4 +1,3 @@
-
 # 🚀 WhatsApp Automator
 
 ## 📖 Overview
@@ -27,6 +26,7 @@ pip install -r requirements.txt
 ```
 
 **Packages you need**:
+
 - `colorama`
 - `selenium`
 - `setuptools`
@@ -35,11 +35,14 @@ pip install -r requirements.txt
 
 ## 🚀 Setup
 
-### 1. Clone the Repository
+### 1. Install Tesseract OCR
 
 ```bash
-git clone https://github.com/yourusername/whatsapp-automator.git
-cd whatsapp-automator
+# Mac
+brew install tesseract
+
+# Ubuntu/Debian
+sudo apt-get install tesseract-ocr
 ```
 
 ### 2. Install Required Packages
@@ -82,6 +85,7 @@ python main.py
 ### Example Files
 
 - **Message File (`message.txt`)**:
+
   ```text
   Hello %NAME%,
   This is a reminder about our meeting tomorrow at 10 AM.

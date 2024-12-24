@@ -4,3 +4,9 @@ undetected-chromedriver
 setuptools
 webdriver-manager
 packaging
+PyPDF2
+requests
+tempfile
+os
+pytesseract==0.3.10
+Pillow==10.0.0

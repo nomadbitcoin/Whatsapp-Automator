@@ -8,7 +8,7 @@
 
 **Next Steps:**
 
-- [ ] Scroll up through the message history within a chat
+- [x] Scroll up through the message history within a chat
 - [ ] Build a DataFrame with the following columns:
   - Message text
   - Date
