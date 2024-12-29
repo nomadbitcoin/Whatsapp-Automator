@@ -17,6 +17,11 @@ from undetected_chromedriver import Chrome
 from webdriver_manager.chrome import ChromeDriverManager
 
 
+import json
+import pandas as pd
+from datetime import datetime
+import pytz
+
 # Define a timeout for waiting for elements to load
 timeout = 120
 
@@ -30,7 +35,28 @@ class Bot:
         # Configure Chrome options
         options = Options()
         # Use a specific Chrome user profile to save the session
-        options.add_argument("user-data-dir=./chrome-data")  # Path to where the user data will be stored
+        options.add_argument("--no-sandbox")
+        # options.add_argument("--disable-dev-shm-usage")
+        # options.add_argument("--disable-gpu")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-infobars")
+
+        options.add_argument(
+            f"--user-data-dir={os.path.join(os.getcwd(), 'chrome-data/nomadbitcoin')}")
+        # TODO mudar para DOWNLOAD_DIR
+        self.TEMP_DIR = os.path.join(os.path.expanduser('~'), 'Downloads')
+        options.add_argument(f"--download.default_directory={self.TEMP_DIR}")
+        options.add_argument("--download.prompt_for_download=false")
+        options.add_argument("--download.directory_upgrade=true")
+        options.add_argument("--safebrowsing.enabled=true")
+
+        self.driver = Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
+
+        # Configure download settings using CDP
+        self.driver.execute_cdp_cmd('Page.setDownloadBehavior', {
+            'behavior': 'allow',
+            'downloadPath': self.TEMP_DIR
+        })
 
         # Initialize the undetected Chrome driver
         self.driver = Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
@@ -254,3 +280,405 @@ class Bot:
     @options.setter
     def options(self, opt):
         self._options = opt
+
+    def count_chats(self):
+        """
+        Counts and returns the number of chat elements on WhatsApp Web.
+        """
+        try:
+            # Wait for chat elements to load
+            WebDriverWait(self.driver, timeout).until(
+                EC.presence_of_element_located((By.CLASS_NAME, "x10l6tqk"))
+            )
+
+            # Find all chat elements
+            chat_elements = self.driver.find_elements(
+                By.CLASS_NAME, "x10l6tqk")
+            chat_count = len(chat_elements)
+
+            print(Fore.CYAN +
+                  f"\nNumber of chats found: {chat_count}" + Style.RESET_ALL)
+            return chat_count
+
+        except Exception as e:
+            print(Fore.RED + f"Error counting chats: {e}" + Style.RESET_ALL)
+            return 0
+
+    def login(self):
+        """
+        Logs into WhatsApp Web.
+        """
+        try:
+            self.driver.get('https://web.whatsapp.com')
+            print("Attempting to load WhatsApp Web...")
+
+            logged_in = False
+            while not logged_in:
+                logged_in = self.wait_for_element_to_be_clickable(
+                    "//div[@class='x1n2onr6 x14yjl9h xudhj91 x18nykt9 xww2gxu']",
+                    success_message="Logged in successfully!",
+                    error_message="Waiting for QR code to be scanned..."
+                )
+                sleep(5)  # Wait before retrying
+
+        except Exception as e:
+            print(Fore.RED + f"Error during login: {e}" + Style.RESET_ALL)
+
+    def check_login(self):
+        """
+        Checks if the user is logged in to WhatsApp Web, if not, logs in.
+        """
+        current_url = self.driver.current_url
+        if "https://web.whatsapp.com/" not in current_url:
+            self.login()
+            sleep(3)
+        else:
+            print(Fore.GREEN + "Already logged in!" + Style.RESET_ALL)
+
+    def login_and_count_chats(self):
+        """
+        Logs into WhatsApp Web and counts the number of chats.
+        """
+        try:
+            self.driver.get('https://web.whatsapp.com')
+            print("Attempting to load WhatsApp Web...")
+
+            logged_in = False
+            while not logged_in:
+                logged_in = self.wait_for_element_to_be_clickable(
+                    "//div[@class='x1n2onr6 x14yjl9h xudhj91 x18nykt9 xww2gxu']",
+                    success_message="Logged in successfully!",
+                    error_message="Waiting for QR code to be scanned..."
+                )
+
+                if logged_in:
+                    sleep(3)  # Small delay to ensure chats are loaded
+                    self.count_chats()
+                    break
+
+                sleep(5)  # Wait before retrying
+
+        except Exception as e:
+            print(Fore.RED + f"Error during login: {e}" + Style.RESET_ALL)
+
+    def click_first_chat_and_scroll(self):
+        """
+        Clicks on the first chat in the list and scrolls up in the chat history.
+        """
+        self.check_login()
+        sleep(3)  # Add extra wait for page to fully load
+
+        # Encontrar a lista de conversas
+        chat_list_xpath = "//div[@aria-label='Chat list']//div[@role='listitem']"
+        chat_items = self.driver.find_elements(By.XPATH, chat_list_xpath)
+
+        # Extrair dados de cada chat
+        all_chats = []
+        for chat in chat_items:
+            try:
+                name = chat.find_element(By.XPATH, ".//span[@dir='auto']").text
+                last_message = chat.find_element(
+                    By.XPATH, ".//div[@role='gridcell']/span").text
+                timestamp = chat.find_element(
+                    By.XPATH, ".//div[@role='gridcell'][2]").text
+
+                all_chats.append(f"{name} | {timestamp} | {last_message}")
+            except Exception as e:
+                print(f"Erro ao processar um chat: {e}")
+
+    def generate_chat_history_csv(self):
+        """
+        Generates CSV files from chat history
+        """
+        self.check_login()
+        sleep(3)  # Wait for page to load
+
+        # Find all chats
+        chat_items = self.driver.find_elements(By.XPATH, "//div[@aria-label='Lista de conversas']//div[@role='listitem']")
+        
+        print(f"Found {len(chat_items)} chats")
+        
+        # For testing, only process first chat
+        chat_items = [chat_items[0]]
+        
+        for chat in chat_items:
+            try:
+                # Get chat name
+                name = chat.find_element(By.XPATH, ".//span[@dir='auto']").text
+                print(f"Processing chat: {name}")
+                
+                # Click on chat
+                chat.click()
+                sleep(2)
+                
+                # Get messages
+                messages = self.get_all_messages()
+                
+                # Convert messages to DataFrame
+                df = self.messages_to_dataframe(messages)
+                
+                # Save to CSV
+                csv_filename = f"{name}_chat_history.csv"
+                df.to_csv(csv_filename, index=False, encoding='utf-8')
+                print(f"Saved chat history to {csv_filename}")
+                
+            except Exception as e:
+                print(f"Error processing chat {name}: {e}")
+        
+        print(Fore.GREEN + "CSV generation complete!" + Style.RESET_ALL)
+
+    def messages_to_dataframe(self, messages):
+        """
+        Converts message list to pandas DataFrame
+        """
+        # Extract relevant fields
+        processed_messages = []
+        
+        for msg in messages:
+            message_dict = {
+                'sender': msg.get('sender'),
+                'text': msg.get('text'),
+                'date': msg.get('date'),
+                'time': msg.get('time'),
+                'timestamp_utc': msg.get('timestamp_utc'),
+            }
+            
+            # Handle attachments
+            if msg.get('attachment_data'):
+                message_dict['attachment_type'] = msg['attachment_data'].get('type')
+                message_dict['attachment_name'] = msg['attachment_data'].get('name')
+                
+            # Handle quoted messages
+            if msg.get('quoted_message'):
+                message_dict['quoted_sender'] = msg['quoted_message'].get('sender')
+                message_dict['quoted_text'] = msg['quoted_message'].get('text')
+                
+            processed_messages.append(message_dict)
+        
+        return pd.DataFrame(processed_messages)
+
+    def get_all_messages(self):
+        """
+        Gets all messages from current chat
+        """
+        # Find conversation container
+        conversation_container = self.driver.find_element(
+            By.XPATH, '//*[@id="main"]/div[3]/div/div[2]')
+        
+        previous_height = 0
+        previous_message_count = 0
+        messages_elements = []
+        
+        # Extract all messages
+        while True:
+            # Get current messages
+            messages_elements = conversation_container.find_elements(
+                By.CSS_SELECTOR, ".message-in, .message-out")
+            
+            # Break if no new messages after scroll
+            if len(messages_elements) == previous_message_count:
+                break
+            
+            previous_message_count = len(messages_elements)
+            
+            # Handle older messages button if present
+            older_messages_button = self.driver.find_elements(
+                By.XPATH, "//button[.//div[contains(text(), 'Click here to get older messages from your phone.')]]")
+            if older_messages_button:
+                older_messages_button[0].click()
+                sleep(10)
+            
+            # Scroll up
+            self.driver.execute_script(
+                "arguments[0].scrollTop = 0;", conversation_container)
+            sleep(2)
+        
+        return self.get_all_message_info(messages_elements)
+
+    def decode_latin(self, text):
+        """
+        Decodes text from various encodings
+        """
+        try:
+            # First attempt: decode directly as utf-8
+            return text.encode().decode('utf-8')
+        except Exception as e1:
+            try:
+                # Second attempt: decode unicode characters
+                return bytes(text, 'utf-8').decode('unicode_escape')
+            except Exception as e2:
+                try:
+                    # Third attempt: modified original method
+                    return text.encode('raw_unicode_escape').decode('utf-8')
+                except Exception as e3:
+                    print(f"Warning: Could not decode text: '{text}'")
+                    print(f"Errors: {e1}, {e2}, {e3}")
+                    return text
+
+    def get_all_message_info(self, messages_elements):
+        """
+        Extracts information from message elements
+        """
+        messages = []
+        for message in messages_elements:
+            try:
+                copyable_text = message.find_elements(
+                    By.CSS_SELECTOR, ".copyable-text")
+                time, date, sender, utc_dt = None, None, None, None
+
+                # Check for quoted message
+                quoted_message = None
+                quoted_elements = message.find_elements(
+                    By.CSS_SELECTOR, "div[role='button'][aria-label='Quoted message']")
+                if len(quoted_elements) > 0:
+                    try:
+                        quoted_sender = quoted_elements[0].find_elements(
+                            By.CSS_SELECTOR, "span[dir='auto']._ao3e")
+                        quoted_text = quoted_elements[0].find_elements(
+                            By.CSS_SELECTOR, "span.quoted-mention._ao3e")
+                        if len(quoted_text) > 0:
+                            quoted_message = {
+                                "sender": quoted_sender[0].text if len(quoted_sender) > 0 else '',
+                                "text": quoted_text[0].text
+                            }
+                    except Exception as e:
+                        print(f"Error processing quoted message: {e}")
+
+                text = ''
+                if len(copyable_text) > 0:
+                    main_text_element = message.find_elements(
+                        By.CSS_SELECTOR, "span.selectable-text.copyable-text")
+                    if len(main_text_element) > 0:
+                        try:
+                            text = self.decode_latin(main_text_element[0].text.strip())
+                        except Exception as e:
+                            print(f"Error processing main message: {e}")
+
+                    date_text = copyable_text[0].get_attribute(
+                        "data-pre-plain-text")
+                    if date_text:
+                        # Extract date from format '[HH:MM, DD/MM/YYYY] Name: '
+                        date_parts = date_text.split('] ')[
+                            0].replace('[', '').split(', ')
+                        time = date_parts[0]
+                        date = date_parts[1]
+                        sender = date_text.split('] ')[1].replace(': ', '')
+
+                        # Convert to UTC
+                        # Assuming São Paulo timezone
+                        local_tz = pytz.timezone('America/Sao_Paulo')
+                        datetime_str = f"{date} {time}"
+                        local_dt = datetime.strptime(
+                            datetime_str, "%d/%m/%Y %H:%M")
+                        local_dt = local_tz.localize(local_dt)
+                        utc_dt = local_dt.astimezone(pytz.UTC)
+
+                attachment_data = None
+                # Check for images
+                image_elements = message.find_elements(
+                    By.CSS_SELECTOR, "img[data-testid='image-thumb'], img[class*='x15kfjtz']")
+                if len(image_elements) > 0:
+                    attachment_data = self.process_image_attachment(
+                        image_elements[0])
+
+                # Check for PDFs
+                pdf_elements = message.find_elements(
+                    By.CSS_SELECTOR, "div[role='button'][title^='Download']")
+                if pdf_elements:
+                    try:
+                        file_name = pdf_elements[0].find_element(
+                            By.CSS_SELECTOR, "span.x13faqbe._ao3e").text
+                        file_size = pdf_elements[0].find_element(
+                            By.CSS_SELECTOR, "span[title$='kB']").text
+
+                        attachment_data = {
+                            "type": "document",
+                            "name": file_name,
+                            "size": file_size,
+                            "file_type": "PDF" if file_name.lower().endswith('.pdf') else "unknown",
+                            "content": None
+                        }
+                    except Exception as e:
+                        print(f"Error processing PDF details: {e}")
+                        attachment_data = {
+                            "type": "document",
+                            "name": file_name if 'file_name' in locals() else "Unknown"
+                        }
+
+                # Check for audio messages
+                audio_elements = message.find_elements(
+                    By.CSS_SELECTOR, "audio[data-testid='audio-player']")
+                if audio_elements:
+                    try:
+                        download_button = message.find_element(
+                            By.CSS_SELECTOR, "button[aria-label='Download voice message']")
+                        download_button.click()
+                        sleep(2)
+
+                        duration = message.find_element(
+                            By.CSS_SELECTOR, "div._ak8w").text
+
+                        max_wait = 30
+                        start_time = datetime.now()
+                        downloaded_file = None
+                        
+                        while (datetime.now() - start_time).total_seconds() < max_wait:
+                            files = os.listdir(self.TEMP_DIR)
+                            audio_files = [f for f in files if f.endswith(('.mp3', '.ogg', '.m4a'))]
+                            if audio_files:
+                                downloaded_file = os.path.join(self.TEMP_DIR, audio_files[0])
+                                break
+                            sleep(1)
+                            
+                        if downloaded_file:
+                            attachment_data = {
+                                "type": "audio",
+                                "duration": duration,
+                                "file_path": downloaded_file,
+                            }
+                        else:
+                            print("Timeout: Audio file not downloaded")
+                            attachment_data = {
+                                "type": "audio",
+                                "duration": duration,
+                                "error": "Download failed"
+                            }
+
+                    except Exception as e:
+                        print(f"Error processing audio message: {e}")
+                        attachment_data = {
+                            "type": "audio",
+                            "error": str(e)
+                        }
+
+                message_data = {
+                    "text": text,
+                    "time": time,
+                    "date": date,
+                    "sender": sender,
+                    "quoted_message": quoted_message,
+                    "attachment_data": attachment_data,
+                    "timestamp_utc": utc_dt.isoformat() if utc_dt else None,
+                }
+
+                messages.append(message_data)
+            except Exception as e:
+                print(f"Error processing a message: {e}")
+        return messages
+
+    def process_image_attachment(self, image_element):
+        """
+        Processes image attachments
+        """
+        try:
+            return {
+                "type": "image",
+                "src": image_element.get_attribute("src"),
+                "alt": image_element.get_attribute("alt")
+            }
+        except Exception as e:
+            print(f"Error processing image attachment: {e}")
+            return {
+                "type": "image",
+                "error": str(e)
+            }

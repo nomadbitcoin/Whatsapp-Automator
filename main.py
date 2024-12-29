@@ -12,6 +12,9 @@ class Menu:
             "1": self.send_message,
             "2": self.send_with_media,
             "3": self.quit,
+            "4": self.count_whatsapp_chats,
+            "5": self.click_first_chat_and_scroll,
+            "6": self.generate_csv_from_chat,
         }
 
     def display(self):
@@ -23,6 +26,9 @@ class Menu:
                 1. Send messages
                 2. Send messages with media attached
                 3. Quit
+                4. Count WhatsApp chats
+                5. Click first chat and scroll up
+                6. Generate CSV from chat history
             """)
         except AssertionError:
             print(Fore.RED + "Please fill the PREFIX variable in main.py OR remove the + in the PREFIX." + Style.RESET_ALL)
@@ -88,6 +94,36 @@ class Menu:
         print("Send MATIC, BEP20, ERC20, BTC, BCH, CRO, LTC, DASH, CELO, ZEC, XRP to:")
         print(Fore.GREEN, "landifrancesco.wallet", Style.RESET_ALL)
         sys.exit(0)
+
+    def count_whatsapp_chats(self):
+        """
+        Initialize bot and count WhatsApp chats without sending messages
+        """
+        print(Fore.GREEN + "COUNTING WHATSAPP CHATS" + Style.RESET_ALL)
+        self.bot = Bot()
+        self.bot.login_and_count_chats()
+        input("\nPress Enter to return to menu...")
+        self.bot.quit_driver()
+
+    def click_first_chat_and_scroll(self):
+        """
+        Initialize bot and click first chat then scroll up
+        """
+        print(Fore.GREEN + "CLICKING FIRST CHAT AND SCROLLING" + Style.RESET_ALL)
+        self.bot = Bot()
+        self.bot.click_first_chat_and_scroll()
+        input("\nPress Enter to return to menu...")
+        self.bot.quit_driver()
+
+    def generate_csv_from_chat(self):
+        """
+        Initialize bot and generate CSV from chat history
+        """
+        print(Fore.GREEN + "GENERATING CSV FROM CHAT HISTORY" + Style.RESET_ALL)
+        self.bot = Bot()
+        self.bot.generate_chat_history_csv()
+        input("\nPress Enter to return to menu...")
+        self.bot.quit_driver()
 
     def run(self):
         while True:

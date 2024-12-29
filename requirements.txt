@@ -4,3 +4,4 @@ undetected-chromedriver
 setuptools
 webdriver-manager
 packaging
+pandas
