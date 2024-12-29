@@ -3,3 +3,7 @@
 __pycache__
 logs/*
 data/*
+
+chrome-data/
+wa-env/
+.DS_Store
