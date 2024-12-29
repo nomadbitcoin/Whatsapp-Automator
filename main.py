@@ -13,8 +13,7 @@ class Menu:
             "2": self.send_with_media,
             "3": self.quit,
             "4": self.count_whatsapp_chats,
-            "5": self.click_first_chat_and_scroll,
-            "6": self.generate_csv_from_chat,
+            "5": self.generate_csv_from_chat,
         }
 
     def display(self):
@@ -27,8 +26,7 @@ class Menu:
                 2. Send messages with media attached
                 3. Quit
                 4. Count WhatsApp chats
-                5. Click first chat and scroll up
-                6. Generate CSV from chat history
+                5. Generate CSV from chat history
             """)
         except AssertionError:
             print(Fore.RED + "Please fill the PREFIX variable in main.py OR remove the + in the PREFIX." + Style.RESET_ALL)

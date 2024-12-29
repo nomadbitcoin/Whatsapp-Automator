@@ -1,7 +1,6 @@
 import csv
 import os.path
 import random
-import time
 from time import sleep
 
 from colorama import Fore, Style
