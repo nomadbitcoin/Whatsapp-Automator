@@ -1,6 +1,7 @@
 import csv
 import os.path
 import random
+import time
 from time import sleep
 
 from colorama import Fore, Style
@@ -57,8 +58,6 @@ class Bot:
             'downloadPath': self.TEMP_DIR
         })
 
-        # Initialize the undetected Chrome driver
-        self.driver = Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
         self._message = None
         self._csv_numbers = None
         self._options = [False, False]  # [include_names, include_media]
@@ -392,9 +391,13 @@ class Bot:
         self.check_login()
         sleep(3)  # Wait for page to load
 
-        # Find all chats
-        chat_items = self.driver.find_elements(By.XPATH, "//div[@aria-label='Lista de conversas']//div[@role='listitem']")
-        
+        # Try first with 'Chat list'
+        chat_items = self.driver.find_elements(By.XPATH, "//div[@aria-label='Chat list']//div[@role='listitem']")
+
+        # If no results, try with 'Lista de conversas'
+        if not chat_items:
+            chat_items = self.driver.find_elements(By.XPATH, "//div[@aria-label='Lista de conversas']//div[@role='listitem']")
+            
         print(f"Found {len(chat_items)} chats")
         
         # For testing, only process first chat
