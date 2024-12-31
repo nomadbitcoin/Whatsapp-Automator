@@ -15,6 +15,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from undetected_chromedriver import Chrome
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.common.exceptions import StaleElementReferenceException
 
 
 import json
@@ -23,7 +24,7 @@ from datetime import datetime
 import pytz
 
 # Define a timeout for waiting for elements to load
-timeout = 120
+timeout = 10
 
 
 class Bot:
@@ -31,20 +32,17 @@ class Bot:
     Bot class that automates WhatsApp Web interactions using a Chrome driver.
     """
 
-    def __init__(self):
+    def __init__(self, session_name=None):
         # Configure Chrome options
         options = Options()
-        # Use a specific Chrome user profile to save the session
-        options.add_argument("--no-sandbox")
-        # options.add_argument("--disable-dev-shm-usage")
-        # options.add_argument("--disable-gpu")
-        options.add_argument("--disable-extensions")
-        options.add_argument("--disable-infobars")
-
-        options.add_argument(
-            f"--user-data-dir={os.path.join(os.getcwd(), 'chrome-data/nomadbitcoin')}")
+        
+        # Use provided session name or default
+        chrome_data_dir = os.path.join(os.getcwd(), 'chrome-data')
+        session_path = os.path.join(chrome_data_dir, session_name if session_name else 'default')
+        options.add_argument(f"--user-data-dir={session_path}")
+        
         # TODO mudar para DOWNLOAD_DIR
-        self.TEMP_DIR = os.path.join(os.path.expanduser('~'), 'Downloads')
+        self.TEMP_DIR = os.path.join(os.getcwd(), 'Downloads')
         options.add_argument(f"--download.default_directory={self.TEMP_DIR}")
         options.add_argument("--download.prompt_for_download=false")
         options.add_argument("--download.directory_upgrade=true")
@@ -302,26 +300,6 @@ class Bot:
             print(Fore.RED + f"Error counting chats: {e}" + Style.RESET_ALL)
             return 0
 
-    def login(self):
-        """
-        Logs into WhatsApp Web.
-        """
-        try:
-            self.driver.get('https://web.whatsapp.com')
-            print("Attempting to load WhatsApp Web...")
-
-            logged_in = False
-            while not logged_in:
-                logged_in = self.wait_for_element_to_be_clickable(
-                    "//div[@class='x1n2onr6 x14yjl9h xudhj91 x18nykt9 xww2gxu']",
-                    success_message="Logged in successfully!",
-                    error_message="Waiting for QR code to be scanned..."
-                )
-                sleep(5)  # Wait before retrying
-
-        except Exception as e:
-            print(Fore.RED + f"Error during login: {e}" + Style.RESET_ALL)
-
     def check_login(self):
         """
         Checks if the user is logged in to WhatsApp Web, if not, logs in.
@@ -459,42 +437,72 @@ class Bot:
         
         return pd.DataFrame(processed_messages)
 
+    def get_messages(conversation_container):
+        """
+        Gets current visible messages from conversation container
+        """
+        return conversation_container.find_elements(
+            By.CSS_SELECTOR, ".message-in, .message-out")
+
+    def scroll_chat(self, conversation_container):
+        """
+        Scrolls chat up and waits for content to load
+        """
+        self.driver.execute_script(
+            "arguments[0].scrollTop = 0;", conversation_container)
+        sleep(2)
+
+    def load_history(self):
+        """
+        Checks and clicks older messages button if present
+        Retries on StaleElementReferenceException
+        """
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                older_messages_button = self.driver.find_elements(By.CLASS_NAME, "x14m1o6m")
+                
+                if older_messages_button:  # If list is not empty
+                    older_messages_button[0].click()
+                    sleep(10)
+                    return True
+                return False
+                
+            except StaleElementReferenceException:
+                print(f"Stale element, retrying... (attempt {attempt + 1}/{max_retries})")
+                sleep(3)
+                continue
+                
+        return False  # Return False if all retries failed
+
     def get_all_messages(self):
         """
-        Gets all messages from current chat
+        Gets all messages from current chat by scrolling up and loading history
         """
-        # Find conversation container
         conversation_container = self.driver.find_element(
             By.XPATH, '//*[@id="main"]/div[3]/div/div[2]')
         
-        previous_height = 0
-        previous_message_count = 0
-        messages_elements = []
-        
-        # Extract all messages
+        # First, scroll to the top of history
         while True:
-            # Get current messages
-            messages_elements = conversation_container.find_elements(
-                By.CSS_SELECTOR, ".message-in, .message-out")
-            
-            # Break if no new messages after scroll
-            if len(messages_elements) == previous_message_count:
-                break
-            
-            previous_message_count = len(messages_elements)
-            
-            # Handle older messages button if present
-            older_messages_button = self.driver.find_elements(
-                By.XPATH, "//button[.//div[contains(text(), 'Click here to get older messages from your phone.')]]")
-            if older_messages_button:
-                older_messages_button[0].click()
-                sleep(10)
+            # Try to load older messages if button is present
+            self.load_history()
             
             # Scroll up
-            self.driver.execute_script(
-                "arguments[0].scrollTop = 0;", conversation_container)
+            self.scroll_chat(conversation_container)
             sleep(2)
-        
+            
+            # Get current scroll height
+            current_height = self.driver.execute_script(
+                "return arguments[0].scrollHeight", conversation_container)
+            
+            # Break only if no older messages button is found
+            older_messages_button = self.driver.find_elements(By.CLASS_NAME, "x14m1o6m")
+            if older_messages_button == []:
+                print("Nao encontrou nada")
+                break
+            
+        # Now get all messages
+        messages_elements = self.get_messages(conversation_container)
         return self.get_all_message_info(messages_elements)
 
     def decode_latin(self, text):
