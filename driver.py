@@ -22,9 +22,10 @@ import json
 import pandas as pd
 from datetime import datetime
 import pytz
+from database import MessageDatabase
 
 # Define a timeout for waiting for elements to load
-timeout = 10
+timeout = 30
 
 
 class Bot:
@@ -65,6 +66,8 @@ class Bot:
         self.__main_selector = "//p[@dir='ltr']"
         self.__fallback_selector = "//div[@class='x1hx0egp x6ikm8r x1odjw0f x1k6rcq7 x6prxxf']//p[@class='selectable-text copyable-text x15bjb6t x1n2onr6']"
         self.__media_selector = "//div[@class='x1hx0egp x6ikm8r x1odjw0f x1k6rcq7 x1lkfr7t']//p[@class='selectable-text copyable-text x15bjb6t x1n2onr6']"
+
+        self.db = MessageDatabase()
 
     def click_button(self, css_selector):
         """
@@ -219,14 +222,19 @@ class Bot:
                     name, number = row[0], row[1]
                     print(f"Sending message to: {name} | {number}")
                     message = self.prepare_message(name)
-                    url = self.construct_whatsapp_url(number)  # Generate URL without the message
+                    url = self.construct_whatsapp_url(number)
 
                     error = self.send_message_to_contact(url, message)
                     self.log_result(number, error)
+                    
+                    # Save successful messages to database
+                    if not error:
+                        self.db.save_message(number, name, message)
 
                     # Random sleep between sending messages to avoid being detected
                     sleep(random.uniform(1, 10))
         finally:
+            self.db.close()  # Close database connection
             self.quit_driver()
 
     def wait_for_element_to_be_clickable(self, xpath, success_message=None, error_message=None, timeout=timeout):
