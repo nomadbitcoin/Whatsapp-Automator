@@ -49,6 +49,7 @@ class Bot:
         options.add_argument("--download.prompt_for_download=false")
         options.add_argument("--download.directory_upgrade=true")
         options.add_argument("--safebrowsing.enabled=true")
+        options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
 
         self.driver = Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
 

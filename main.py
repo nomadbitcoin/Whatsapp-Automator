@@ -2,7 +2,7 @@ from driver import Bot, Fore, Style
 import sys
 import os
 
-PREFIX = ""  # The national prefix without the +
+PREFIX = "55"  # The national prefix without the +
 
 
 class Menu:
@@ -14,19 +14,22 @@ class Menu:
             "3": self.quit,
             "4": self.count_whatsapp_chats,
             "5": self.generate_csv_from_chat,
+            "6": self.generate_chat_history,
         }
 
     def display(self):
         try:
             assert PREFIX != "" and "+" not in PREFIX
             print("WHATSAPP AUTOMATOR")
-            print(Fore.YELLOW + f"You have chosen this number prefix: {PREFIX}" + Style.RESET_ALL)
+            print(
+                Fore.YELLOW + f"You have chosen this number prefix: {PREFIX}" + Style.RESET_ALL)
             print("""
                 1. Send messages
                 2. Send messages with media attached
                 3. Quit
                 4. Count WhatsApp chats
                 5. Generate CSV from chat history
+                6. Extract chat history
             """)
         except AssertionError:
             print(Fore.RED + "Please fill the PREFIX variable in main.py OR remove the + in the PREFIX." + Style.RESET_ALL)
@@ -41,7 +44,8 @@ class Menu:
 
         include_names = None
         while include_names not in ["y", "n"]:
-            include_names = input("- Include names in the messages? Y/N\n> ").lower()
+            include_names = input(
+                "- Include names in the messages? Y/N\n> ").lower()
 
         include_names = True if include_names == "y" else False
 
@@ -120,6 +124,22 @@ class Menu:
         print(Fore.GREEN + "GENERATING CSV FROM CHAT HISTORY" + Style.RESET_ALL)
         self.bot = Bot()
         self.bot.generate_chat_history_csv()
+        input("\nPress Enter to return to menu...")
+        self.bot.quit_driver()
+
+    def generate_chat_history(self):
+        """Extract and save chat history"""
+        print(Fore.GREEN + "EXTRACTING CHAT HISTORY" + Style.RESET_ALL)
+        self.bot = Bot()
+        self.bot.login()
+
+        from chat_extractor import ChatExtractor
+        extractor = ChatExtractor(self.bot)
+        chats = extractor.extract_all_chats()
+
+        print(f"\nExtracted {len(chats)} chats")
+        print("Chat histories saved to individual JSON files")
+
         input("\nPress Enter to return to menu...")
         self.bot.quit_driver()
 

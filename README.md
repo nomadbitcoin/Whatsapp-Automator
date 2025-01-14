@@ -14,7 +14,7 @@
 
 ## 🛠️ Requirements
 
-- **Python 3.x**
+- **Python 3.11**
 - **Google Chrome**
 - **ChromeDriver** (automatically managed by `webdriver-manager`)
 
@@ -41,6 +41,14 @@ pip install -r requirements.txt
 git clone https://github.com/yourusername/whatsapp-automator.git
 cd whatsapp-automator
 ```
+
+and install `ffmpeg`
+
+```bash
+sudo apt-get install ffmpeg
+```
+
+or `brew install ffmpeg`
 
 ### 2. Install Required Packages
 

@@ -7,3 +7,6 @@ data/*
 chrome-data/
 wa-env/
 .DS_Store
+
+venv/
+output

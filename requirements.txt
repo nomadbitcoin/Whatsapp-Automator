@@ -4,4 +4,11 @@ undetected-chromedriver
 setuptools
 webdriver-manager
 packaging
+pytz
+PyPDF2
+requests
+pytesseract==0.3.10
+Pillow==10.0.0
+faster-whisper
+pydub
 pandas
