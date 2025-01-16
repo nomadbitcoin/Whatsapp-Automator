@@ -15,15 +15,17 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from undetected_chromedriver import Chrome
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.common.exceptions import StaleElementReferenceException
 
 
 import json
 import pandas as pd
 from datetime import datetime
 import pytz
+from database import MessageDatabase
 
 # Define a timeout for waiting for elements to load
-timeout = 120
+timeout = 30
 
 
 class Bot:
@@ -31,27 +33,26 @@ class Bot:
     Bot class that automates WhatsApp Web interactions using a Chrome driver.
     """
 
-    def __init__(self):
+    def __init__(self, session_name=None):
         # Configure Chrome options
         options = Options()
-        # Use a specific Chrome user profile to save the session
-        options.add_argument("--no-sandbox")
-        # options.add_argument("--disable-dev-shm-usage")
-        # options.add_argument("--disable-gpu")
-        options.add_argument("--disable-extensions")
-        options.add_argument("--disable-infobars")
 
-        options.add_argument(
-            f"--user-data-dir={os.path.join(os.getcwd(), 'chrome-data/nomadbitcoin')}")
+        # Use provided session name or default
+        chrome_data_dir = os.path.join(os.getcwd(), 'chrome-data')
+        session_path = os.path.join(
+            chrome_data_dir, session_name if session_name else 'default')
+        options.add_argument(f"--user-data-dir={session_path}")
+
         # TODO mudar para DOWNLOAD_DIR
-        self.TEMP_DIR = os.path.join(os.path.expanduser('~'), 'Downloads')
+        self.TEMP_DIR = os.path.join(os.getcwd(), 'Downloads')
         options.add_argument(f"--download.default_directory={self.TEMP_DIR}")
         options.add_argument("--download.prompt_for_download=false")
         options.add_argument("--download.directory_upgrade=true")
         options.add_argument("--safebrowsing.enabled=true")
         options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
 
-        self.driver = Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
+        self.driver = Chrome(service=ChromeService(
+            ChromeDriverManager().install()), options=options)
 
         # Configure download settings using CDP
         self.driver.execute_cdp_cmd('Page.setDownloadBehavior', {
@@ -68,6 +69,8 @@ class Bot:
         self.__main_selector = "//p[@dir='ltr']"
         self.__fallback_selector = "//div[@class='x1hx0egp x6ikm8r x1odjw0f x1k6rcq7 x6prxxf']//p[@class='selectable-text copyable-text x15bjb6t x1n2onr6']"
         self.__media_selector = "//div[@class='x1hx0egp x6ikm8r x1odjw0f x1k6rcq7 x1lkfr7t']//p[@class='selectable-text copyable-text x15bjb6t x1n2onr6']"
+
+        self.db = MessageDatabase()
 
     def click_button(self, css_selector):
         """
@@ -128,7 +131,8 @@ class Bot:
         Logs the result of each message send attempt.
         """
         assert self._start_time is not None
-        log_path = "logs/" + self._start_time + ("_notsent.txt" if error else "_sent.txt")
+        log_path = "logs/" + self._start_time + \
+            ("_notsent.txt" if error else "_sent.txt")
 
         with open(log_path, "a") as logfile:
             logfile.write(number.strip() + "\n")
@@ -172,12 +176,14 @@ class Bot:
             # Try to click the main input box, if it fails, try the fallback
             try:
                 message_box = WebDriverWait(self.driver, timeout).until(
-                    EC.element_to_be_clickable((By.XPATH, self.__main_selector))
+                    EC.element_to_be_clickable(
+                        (By.XPATH, self.__main_selector))
                 )
 
             except:
                 message_box = WebDriverWait(self.driver, timeout).until(
-                    EC.element_to_be_clickable((By.XPATH, self.__fallback_selector))
+                    EC.element_to_be_clickable(
+                        (By.XPATH, self.__fallback_selector))
                 )
 
             # If media is included proceed differently
@@ -185,7 +191,8 @@ class Bot:
                 message_box.send_keys(Keys.CONTROL, 'v')
                 sleep(random.uniform(2, 5))  # Allow time for media to paste
                 message_box = WebDriverWait(self.driver, timeout).until(
-                    EC.element_to_be_clickable((By.XPATH, self.__media_selector))
+                    EC.element_to_be_clickable(
+                        (By.XPATH, self.__media_selector))
                 )
 
             # Type and send the message
@@ -195,14 +202,14 @@ class Bot:
             self.click_button("span[data-icon='send']")
 
             sleep(random.uniform(2, 5))  # Delay before moving on
-            print(Fore.GREEN + "Message and media (if any) sent successfully." + Style.RESET_ALL)
+            print(
+                Fore.GREEN + "Message and media (if any) sent successfully." + Style.RESET_ALL)
             return False  # No error
 
         except Exception as e:
             print(e)
             print(Fore.RED + "Error sending message and media." + Style.RESET_ALL)
             return True  # Error occurred
-
 
     def send_messages_to_all_contacts(self):
         """
@@ -222,14 +229,19 @@ class Bot:
                     name, number = row[0], row[1]
                     print(f"Sending message to: {name} | {number}")
                     message = self.prepare_message(name)
-                    url = self.construct_whatsapp_url(number)  # Generate URL without the message
+                    url = self.construct_whatsapp_url(number)
 
                     error = self.send_message_to_contact(url, message)
                     self.log_result(number, error)
 
+                    # Save successful messages to database
+                    if not error:
+                        self.db.save_sent_message(number, name, message)
+
                     # Random sleep between sending messages to avoid being detected
                     sleep(random.uniform(1, 10))
         finally:
+            self.db.close()  # Close database connection
             self.quit_driver()
 
     def wait_for_element_to_be_clickable(self, xpath, success_message=None, error_message=None, timeout=timeout):
@@ -303,26 +315,6 @@ class Bot:
             print(Fore.RED + f"Error counting chats: {e}" + Style.RESET_ALL)
             return 0
 
-    def login(self):
-        """
-        Logs into WhatsApp Web.
-        """
-        try:
-            self.driver.get('https://web.whatsapp.com')
-            print("Attempting to load WhatsApp Web...")
-
-            logged_in = False
-            while not logged_in:
-                logged_in = self.wait_for_element_to_be_clickable(
-                    "//div[@class='x1n2onr6 x14yjl9h xudhj91 x18nykt9 xww2gxu']",
-                    success_message="Logged in successfully!",
-                    error_message="Waiting for QR code to be scanned..."
-                )
-                sleep(5)  # Wait before retrying
-
-        except Exception as e:
-            print(Fore.RED + f"Error during login: {e}" + Style.RESET_ALL)
-
     def check_login(self):
         """
         Checks if the user is logged in to WhatsApp Web, if not, logs in.
@@ -393,41 +385,43 @@ class Bot:
         sleep(3)  # Wait for page to load
 
         # Try first with 'Chat list'
-        chat_items = self.driver.find_elements(By.XPATH, "//div[@aria-label='Chat list']//div[@role='listitem']")
+        chat_items = self.driver.find_elements(
+            By.XPATH, "//div[@aria-label='Chat list']//div[@role='listitem']")
 
         # If no results, try with 'Lista de conversas'
         if not chat_items:
-            chat_items = self.driver.find_elements(By.XPATH, "//div[@aria-label='Lista de conversas']//div[@role='listitem']")
-            
+            chat_items = self.driver.find_elements(
+                By.XPATH, "//div[@aria-label='Lista de conversas']//div[@role='listitem']")
+
         print(f"Found {len(chat_items)} chats")
-        
+
         # For testing, only process first chat
         chat_items = [chat_items[0]]
-        
+
         for chat in chat_items:
             try:
                 # Get chat name
                 name = chat.find_element(By.XPATH, ".//span[@dir='auto']").text
                 print(f"Processing chat: {name}")
-                
+
                 # Click on chat
                 chat.click()
                 sleep(2)
-                
+
                 # Get messages
                 messages = self.get_all_messages()
-                
+
                 # Convert messages to DataFrame
                 df = self.messages_to_dataframe(messages)
-                
+
                 # Save to CSV
                 csv_filename = f"{name}_chat_history.csv"
                 df.to_csv(csv_filename, index=False, encoding='utf-8')
                 print(f"Saved chat history to {csv_filename}")
-                
+
             except Exception as e:
                 print(f"Error processing chat {name}: {e}")
-        
+
         print(Fore.GREEN + "CSV generation complete!" + Style.RESET_ALL)
 
     def messages_to_dataframe(self, messages):
@@ -436,7 +430,7 @@ class Bot:
         """
         # Extract relevant fields
         processed_messages = []
-        
+
         for msg in messages:
             message_dict = {
                 'sender': msg.get('sender'),
@@ -445,57 +439,93 @@ class Bot:
                 'time': msg.get('time'),
                 'timestamp_utc': msg.get('timestamp_utc'),
             }
-            
+
             # Handle attachments
             if msg.get('attachment_data'):
-                message_dict['attachment_type'] = msg['attachment_data'].get('type')
-                message_dict['attachment_name'] = msg['attachment_data'].get('name')
-                
+                message_dict['attachment_type'] = msg['attachment_data'].get(
+                    'type')
+                message_dict['attachment_name'] = msg['attachment_data'].get(
+                    'name')
+
             # Handle quoted messages
             if msg.get('quoted_message'):
-                message_dict['quoted_sender'] = msg['quoted_message'].get('sender')
+                message_dict['quoted_sender'] = msg['quoted_message'].get(
+                    'sender')
                 message_dict['quoted_text'] = msg['quoted_message'].get('text')
-                
+
             processed_messages.append(message_dict)
-        
+
         return pd.DataFrame(processed_messages)
+
+    def get_messages(conversation_container):
+        """
+        Gets current visible messages from conversation container
+        """
+        return conversation_container.find_elements(
+            By.CSS_SELECTOR, ".message-in, .message-out")
+
+    def scroll_chat(self, conversation_container):
+        """
+        Scrolls chat up and waits for content to load
+        """
+        self.driver.execute_script(
+            "arguments[0].scrollTop = 0;", conversation_container)
+        sleep(2)
+
+    def load_history(self):
+        """
+        Checks and clicks older messages button if present
+        Retries on StaleElementReferenceException
+        """
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                older_messages_button = self.driver.find_elements(
+                    By.CLASS_NAME, "x14m1o6m")
+
+                if older_messages_button:  # If list is not empty
+                    older_messages_button[0].click()
+                    sleep(10)
+                    return True
+                return False
+
+            except StaleElementReferenceException:
+                print(
+                    f"Stale element, retrying... (attempt {attempt + 1}/{max_retries})")
+                sleep(3)
+                continue
+
+        return False  # Return False if all retries failed
 
     def get_all_messages(self):
         """
-        Gets all messages from current chat
+        Gets all messages from current chat by scrolling up and loading history
         """
-        # Find conversation container
         conversation_container = self.driver.find_element(
             By.XPATH, '//*[@id="main"]/div[3]/div/div[2]')
-        
-        previous_height = 0
-        previous_message_count = 0
-        messages_elements = []
-        
-        # Extract all messages
+
+        # First, scroll to the top of history
         while True:
-            # Get current messages
-            messages_elements = conversation_container.find_elements(
-                By.CSS_SELECTOR, ".message-in, .message-out")
-            
-            # Break if no new messages after scroll
-            if len(messages_elements) == previous_message_count:
-                break
-            
-            previous_message_count = len(messages_elements)
-            
-            # Handle older messages button if present
-            older_messages_button = self.driver.find_elements(
-                By.XPATH, "//button[.//div[contains(text(), 'Click here to get older messages from your phone.')]]")
-            if older_messages_button:
-                older_messages_button[0].click()
-                sleep(10)
-            
+            # Try to load older messages if button is present
+            self.load_history()
+
             # Scroll up
-            self.driver.execute_script(
-                "arguments[0].scrollTop = 0;", conversation_container)
+            self.scroll_chat(conversation_container)
             sleep(2)
-        
+
+            # Get current scroll height
+            current_height = self.driver.execute_script(
+                "return arguments[0].scrollHeight", conversation_container)
+
+            # Break only if no older messages button is found
+            older_messages_button = self.driver.find_elements(
+                By.CLASS_NAME, "x14m1o6m")
+            if older_messages_button == []:
+                print("Nao encontrou nada")
+                break
+
+        # Now get all messages
+        messages_elements = self.get_messages(conversation_container)
         return self.get_all_message_info(messages_elements)
 
     def decode_latin(self, text):
@@ -553,7 +583,8 @@ class Bot:
                         By.CSS_SELECTOR, "span.selectable-text.copyable-text")
                     if len(main_text_element) > 0:
                         try:
-                            text = self.decode_latin(main_text_element[0].text.strip())
+                            text = self.decode_latin(
+                                main_text_element[0].text.strip())
                         except Exception as e:
                             print(f"Error processing main message: {e}")
 
@@ -624,15 +655,17 @@ class Bot:
                         max_wait = 30
                         start_time = datetime.now()
                         downloaded_file = None
-                        
+
                         while (datetime.now() - start_time).total_seconds() < max_wait:
                             files = os.listdir(self.TEMP_DIR)
-                            audio_files = [f for f in files if f.endswith(('.mp3', '.ogg', '.m4a'))]
+                            audio_files = [f for f in files if f.endswith(
+                                ('.mp3', '.ogg', '.m4a'))]
                             if audio_files:
-                                downloaded_file = os.path.join(self.TEMP_DIR, audio_files[0])
+                                downloaded_file = os.path.join(
+                                    self.TEMP_DIR, audio_files[0])
                                 break
                             sleep(1)
-                            
+
                         if downloaded_file:
                             attachment_data = {
                                 "type": "audio",

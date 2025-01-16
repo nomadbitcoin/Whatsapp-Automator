@@ -1,0 +1,6 @@
+- [ ] Salvar os números para os quais enviou mensagem
+- [ ] Checar conversas para as quais enviou mensagem e verificar mensagens recentes se uma venda foi realizada.
+    - [ ] Checar se o corretor enviou a chave PIX
+    - [ ] Chacar se uma transferência foi feita
+
+- [ ] Guardar informações de contato: Nome, Número e Tag.

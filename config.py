@@ -26,6 +26,7 @@ RECEIPT_KEYWORDS = [
     'instituição'
 ]
 
+GROUP_ANALYZE = False
 PDF_ANALYZE = False
 AUDIO_ANALYZE = False
 IMAGE_ANALYZE = False
