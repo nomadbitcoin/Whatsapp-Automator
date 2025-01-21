@@ -28,6 +28,67 @@ from database import MessageDatabase
 timeout = 30
 
 
+class Contact:
+    def __init__(self, name, number, db):
+        self.db = db
+        contact = self.db.get_contact_by_number(number)
+        messages = self.db.get_all_chat_history_by_number(number)
+        if contact:
+            self.number = contact[0]
+            self.name = contact[1]
+            self.created_at = contact[2]
+            self.updated_at = contact[3]
+            self.last_message = contact[4]
+            self.last_message_timestamp = contact[5]
+            self.first_message_found = contact[6]
+            self.first_message_found_timestamp = contact[7]
+            self.is_first_message = contact[8]
+            self.received_receipt = contact[9]
+            self.received_receipt_timestamp = contact[10]
+            self.is_ws_business = contact[11]
+            self.try_to_get_messages_error = contact[12]
+            self.messages = messages
+        else:
+            self.number = number
+            self.name = name
+            self.created_at = datetime.now()
+            self.updated_at = datetime.now()
+            self.last_message = None
+            self.last_message_timestamp = None
+            self.first_message_found = None
+            self.first_message_found_timestamp = None
+            self.is_first_message = False
+            self.received_receipt = False
+            self.received_receipt_timestamp = None
+            self.is_ws_business = False
+            self.try_to_get_messages_error = False
+            self.messages = []
+            self.db.save_contact(self.number, self.name, self.last_message_timestamp, self.last_message, self.last_message_timestamp,
+                                 self.first_message_found, self.first_message_found_timestamp, self.is_first_message, self.received_receipt, self.received_receipt_timestamp, self.try_to_get_messages_error)
+
+    def __str__(self):
+        return f"{self.name} | {self.number}"
+
+    def update_last_message(self, message, timestamp):
+        self.last_message = message
+        self.last_message_timestamp = timestamp
+        self.db.save_contact(self.number, self.name, self.last_message_timestamp, self.last_message, self.last_message_timestamp,
+                             self.first_message_found, self.first_message_found_timestamp, self.is_first_message, self.received_receipt, self.received_receipt_timestamp, self.try_to_get_messages_error)
+
+    def update_first_message(self, message, timestamp, is_first_message):
+        self.first_message_found = message
+        self.first_message_found_timestamp = timestamp
+        self.is_first_message = is_first_message
+        self.db.save_contact(self.number, self.name, self.last_message_timestamp, self.last_message, self.last_message_timestamp,
+                             self.first_message_found, self.first_message_found_timestamp, self.is_first_message, self.received_receipt, self.received_receipt_timestamp, self.try_to_get_messages_error)
+
+    def update_received_receipt(self, timestamp):
+        self.received_receipt = True
+        self.received_receipt_timestamp = timestamp
+        self.db.save_contact(self.number, self.name, self.last_message_timestamp, self.last_message, self.last_message_timestamp,
+                             self.first_message_found, self.first_message_found_timestamp, self.is_first_message, self.received_receipt, self.received_receipt_timestamp, self.try_to_get_messages_error)
+
+
 class Bot:
     """
     Bot class that automates WhatsApp Web interactions using a Chrome driver.
@@ -36,6 +97,9 @@ class Bot:
     def __init__(self, session_name=None):
         # Configure Chrome options
         options = Options()
+
+        # Mute audio
+        options.add_argument("--mute-audio")
 
         # Use provided session name or default
         chrome_data_dir = os.path.join(os.getcwd(), 'chrome-data')
@@ -124,7 +188,6 @@ class Bot:
 
         # Record the start time for logs once the login is successful
         self._start_time = time.strftime("%d-%m-%Y_%H%M%S", time.localtime())
-        self.send_messages_to_all_contacts()
 
     def log_result(self, number, error):
         """
@@ -377,52 +440,16 @@ class Bot:
             except Exception as e:
                 print(f"Erro ao processar um chat: {e}")
 
+    # TODO test
     def generate_chat_history_csv(self):
         """
-        Generates CSV files from chat history
+        Generates CSV files from chat_history sql table
         """
-        self.check_login()
-        sleep(3)  # Wait for page to load
-
-        # Try first with 'Chat list'
-        chat_items = self.driver.find_elements(
-            By.XPATH, "//div[@aria-label='Chat list']//div[@role='listitem']")
-
-        # If no results, try with 'Lista de conversas'
-        if not chat_items:
-            chat_items = self.driver.find_elements(
-                By.XPATH, "//div[@aria-label='Lista de conversas']//div[@role='listitem']")
-
-        print(f"Found {len(chat_items)} chats")
-
-        # For testing, only process first chat
-        chat_items = [chat_items[0]]
-
-        for chat in chat_items:
-            try:
-                # Get chat name
-                name = chat.find_element(By.XPATH, ".//span[@dir='auto']").text
-                print(f"Processing chat: {name}")
-
-                # Click on chat
-                chat.click()
-                sleep(2)
-
-                # Get messages
-                messages = self.get_all_messages()
-
-                # Convert messages to DataFrame
-                df = self.messages_to_dataframe(messages)
-
-                # Save to CSV
-                csv_filename = f"{name}_chat_history.csv"
-                df.to_csv(csv_filename, index=False, encoding='utf-8')
-                print(f"Saved chat history to {csv_filename}")
-
-            except Exception as e:
-                print(f"Error processing chat {name}: {e}")
-
-        print(Fore.GREEN + "CSV generation complete!" + Style.RESET_ALL)
+        csv_path = self.db.csv_from_chat_history()
+        if csv_path:
+            print(Fore.GREEN + "CSV generation complete!" + Style.RESET_ALL)
+        else:
+            print(Fore.RED + "Error generating CSV file." + Style.RESET_ALL)
 
     def messages_to_dataframe(self, messages):
         """
@@ -456,265 +483,3 @@ class Bot:
             processed_messages.append(message_dict)
 
         return pd.DataFrame(processed_messages)
-
-    def get_messages(conversation_container):
-        """
-        Gets current visible messages from conversation container
-        """
-        return conversation_container.find_elements(
-            By.CSS_SELECTOR, ".message-in, .message-out")
-
-    def scroll_chat(self, conversation_container):
-        """
-        Scrolls chat up and waits for content to load
-        """
-        self.driver.execute_script(
-            "arguments[0].scrollTop = 0;", conversation_container)
-        sleep(2)
-
-    def load_history(self):
-        """
-        Checks and clicks older messages button if present
-        Retries on StaleElementReferenceException
-        """
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                older_messages_button = self.driver.find_elements(
-                    By.CLASS_NAME, "x14m1o6m")
-
-                if older_messages_button:  # If list is not empty
-                    older_messages_button[0].click()
-                    sleep(10)
-                    return True
-                return False
-
-            except StaleElementReferenceException:
-                print(
-                    f"Stale element, retrying... (attempt {attempt + 1}/{max_retries})")
-                sleep(3)
-                continue
-
-        return False  # Return False if all retries failed
-
-    def get_all_messages(self):
-        """
-        Gets all messages from current chat by scrolling up and loading history
-        """
-        conversation_container = self.driver.find_element(
-            By.XPATH, '//*[@id="main"]/div[3]/div/div[2]')
-
-        # First, scroll to the top of history
-        while True:
-            # Try to load older messages if button is present
-            self.load_history()
-
-            # Scroll up
-            self.scroll_chat(conversation_container)
-            sleep(2)
-
-            # Get current scroll height
-            current_height = self.driver.execute_script(
-                "return arguments[0].scrollHeight", conversation_container)
-
-            # Break only if no older messages button is found
-            older_messages_button = self.driver.find_elements(
-                By.CLASS_NAME, "x14m1o6m")
-            if older_messages_button == []:
-                print("Nao encontrou nada")
-                break
-
-        # Now get all messages
-        messages_elements = self.get_messages(conversation_container)
-        return self.get_all_message_info(messages_elements)
-
-    def decode_latin(self, text):
-        """
-        Decodes text from various encodings
-        """
-        try:
-            # First attempt: decode directly as utf-8
-            return text.encode().decode('utf-8')
-        except Exception as e1:
-            try:
-                # Second attempt: decode unicode characters
-                return bytes(text, 'utf-8').decode('unicode_escape')
-            except Exception as e2:
-                try:
-                    # Third attempt: modified original method
-                    return text.encode('raw_unicode_escape').decode('utf-8')
-                except Exception as e3:
-                    print(f"Warning: Could not decode text: '{text}'")
-                    print(f"Errors: {e1}, {e2}, {e3}")
-                    return text
-
-    def get_all_message_info(self, messages_elements):
-        """
-        Extracts information from message elements
-        """
-        messages = []
-        for message in messages_elements:
-            try:
-                copyable_text = message.find_elements(
-                    By.CSS_SELECTOR, ".copyable-text")
-                time, date, sender, utc_dt = None, None, None, None
-
-                # Check for quoted message
-                quoted_message = None
-                quoted_elements = message.find_elements(
-                    By.CSS_SELECTOR, "div[role='button'][aria-label='Quoted message']")
-                if len(quoted_elements) > 0:
-                    try:
-                        quoted_sender = quoted_elements[0].find_elements(
-                            By.CSS_SELECTOR, "span[dir='auto']._ao3e")
-                        quoted_text = quoted_elements[0].find_elements(
-                            By.CSS_SELECTOR, "span.quoted-mention._ao3e")
-                        if len(quoted_text) > 0:
-                            quoted_message = {
-                                "sender": quoted_sender[0].text if len(quoted_sender) > 0 else '',
-                                "text": quoted_text[0].text
-                            }
-                    except Exception as e:
-                        print(f"Error processing quoted message: {e}")
-
-                text = ''
-                if len(copyable_text) > 0:
-                    main_text_element = message.find_elements(
-                        By.CSS_SELECTOR, "span.selectable-text.copyable-text")
-                    if len(main_text_element) > 0:
-                        try:
-                            text = self.decode_latin(
-                                main_text_element[0].text.strip())
-                        except Exception as e:
-                            print(f"Error processing main message: {e}")
-
-                    date_text = copyable_text[0].get_attribute(
-                        "data-pre-plain-text")
-                    if date_text:
-                        # Extract date from format '[HH:MM, DD/MM/YYYY] Name: '
-                        date_parts = date_text.split('] ')[
-                            0].replace('[', '').split(', ')
-                        time = date_parts[0]
-                        date = date_parts[1]
-                        sender = date_text.split('] ')[1].replace(': ', '')
-
-                        # Convert to UTC
-                        # Assuming São Paulo timezone
-                        local_tz = pytz.timezone('America/Sao_Paulo')
-                        datetime_str = f"{date} {time}"
-                        local_dt = datetime.strptime(
-                            datetime_str, "%d/%m/%Y %H:%M")
-                        local_dt = local_tz.localize(local_dt)
-                        utc_dt = local_dt.astimezone(pytz.UTC)
-
-                attachment_data = None
-                # Check for images
-                image_elements = message.find_elements(
-                    By.CSS_SELECTOR, "img[data-testid='image-thumb'], img[class*='x15kfjtz']")
-                if len(image_elements) > 0:
-                    attachment_data = self.process_image_attachment(
-                        image_elements[0])
-
-                # Check for PDFs
-                pdf_elements = message.find_elements(
-                    By.CSS_SELECTOR, "div[role='button'][title^='Download']")
-                if pdf_elements:
-                    try:
-                        file_name = pdf_elements[0].find_element(
-                            By.CSS_SELECTOR, "span.x13faqbe._ao3e").text
-                        file_size = pdf_elements[0].find_element(
-                            By.CSS_SELECTOR, "span[title$='kB']").text
-
-                        attachment_data = {
-                            "type": "document",
-                            "name": file_name,
-                            "size": file_size,
-                            "file_type": "PDF" if file_name.lower().endswith('.pdf') else "unknown",
-                            "content": None
-                        }
-                    except Exception as e:
-                        print(f"Error processing PDF details: {e}")
-                        attachment_data = {
-                            "type": "document",
-                            "name": file_name if 'file_name' in locals() else "Unknown"
-                        }
-
-                # Check for audio messages
-                audio_elements = message.find_elements(
-                    By.CSS_SELECTOR, "audio[data-testid='audio-player']")
-                if audio_elements:
-                    try:
-                        download_button = message.find_element(
-                            By.CSS_SELECTOR, "button[aria-label='Download voice message']")
-                        download_button.click()
-                        sleep(2)
-
-                        duration = message.find_element(
-                            By.CSS_SELECTOR, "div._ak8w").text
-
-                        max_wait = 30
-                        start_time = datetime.now()
-                        downloaded_file = None
-
-                        while (datetime.now() - start_time).total_seconds() < max_wait:
-                            files = os.listdir(self.TEMP_DIR)
-                            audio_files = [f for f in files if f.endswith(
-                                ('.mp3', '.ogg', '.m4a'))]
-                            if audio_files:
-                                downloaded_file = os.path.join(
-                                    self.TEMP_DIR, audio_files[0])
-                                break
-                            sleep(1)
-
-                        if downloaded_file:
-                            attachment_data = {
-                                "type": "audio",
-                                "duration": duration,
-                                "file_path": downloaded_file,
-                            }
-                        else:
-                            print("Timeout: Audio file not downloaded")
-                            attachment_data = {
-                                "type": "audio",
-                                "duration": duration,
-                                "error": "Download failed"
-                            }
-
-                    except Exception as e:
-                        print(f"Error processing audio message: {e}")
-                        attachment_data = {
-                            "type": "audio",
-                            "error": str(e)
-                        }
-
-                message_data = {
-                    "text": text,
-                    "time": time,
-                    "date": date,
-                    "sender": sender,
-                    "quoted_message": quoted_message,
-                    "attachment_data": attachment_data,
-                    "timestamp_utc": utc_dt.isoformat() if utc_dt else None,
-                }
-
-                messages.append(message_data)
-            except Exception as e:
-                print(f"Error processing a message: {e}")
-        return messages
-
-    def process_image_attachment(self, image_element):
-        """
-        Processes image attachments
-        """
-        try:
-            return {
-                "type": "image",
-                "src": image_element.get_attribute("src"),
-                "alt": image_element.get_attribute("alt")
-            }
-        except Exception as e:
-            print(f"Error processing image attachment: {e}")
-            return {
-                "type": "image",
-                "error": str(e)
-            }

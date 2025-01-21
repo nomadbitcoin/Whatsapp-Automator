@@ -2,50 +2,57 @@ from driver import Bot, Fore, Style
 import sys
 import os
 
+# TODO: necessity of this variable?2
 PREFIX = "55"  # The national prefix without the +
+
 
 def list_chrome_sessions():
     """Lists all available Chrome sessions and allows creating a new one"""
     chrome_data_dir = os.path.join(os.getcwd(), 'chrome-data')
-    
+
     # Debug prints
     print(f"\nLooking for sessions in: {chrome_data_dir}")
-    
+
     # Create chrome-data directory if it doesn't exist
     if not os.path.exists(chrome_data_dir):
         print("Creating chrome-data directory as it doesn't exist")
         os.makedirs(chrome_data_dir)
-    
+
     # Get list of existing sessions
     sessions = []
     try:
-        sessions = [d for d in os.listdir(chrome_data_dir) 
-                   if os.path.isdir(os.path.join(chrome_data_dir, d))]
+        sessions = [d for d in os.listdir(chrome_data_dir)
+                    if os.path.isdir(os.path.join(chrome_data_dir, d))]
         print(f"Found {len(sessions)} existing sessions: {sessions}")
     except Exception as e:
         print(f"Error listing sessions: {e}")
-    
+
     print("\nAvailable sessions:")
     print("0) Create new session")
     for idx, session in enumerate(sessions, 1):
         print(f"{idx}) {session}")
-    
+
     while True:
         try:
-            choice = int(input("\nSelect a session (0-{}): ".format(len(sessions))))
+            choice = int(
+                input("\nSelect a session (0-{}): ".format(len(sessions))))
             if choice == 0:
                 # Create new session
                 while True:
                     new_session = input("Enter name for new session: ").strip()
-                    new_session_path = os.path.join(chrome_data_dir, new_session)
+                    new_session_path = os.path.join(
+                        chrome_data_dir, new_session)
                     if os.path.exists(new_session_path):
-                        print(Fore.RED + "Session already exists. Choose another name." + Style.RESET_ALL)
+                        print(
+                            Fore.RED + "Session already exists. Choose another name." + Style.RESET_ALL)
                     elif new_session and all(c.isalnum() or c in '_-' for c in new_session):
                         os.makedirs(new_session_path)
-                        print(f"Created new session directory: {new_session_path}")
+                        print(
+                            f"Created new session directory: {new_session_path}")
                         return new_session
                     else:
-                        print(Fore.RED + "Invalid session name. Use only letters, numbers, underscore and hyphen." + Style.RESET_ALL)
+                        print(
+                            Fore.RED + "Invalid session name. Use only letters, numbers, underscore and hyphen." + Style.RESET_ALL)
             elif 1 <= choice <= len(sessions):
                 return sessions[choice-1]
             else:
@@ -75,8 +82,10 @@ class Menu:
         try:
             assert PREFIX != "" and "+" not in PREFIX
             print("\nWHATSAPP AUTOMATOR")
-            print(Fore.YELLOW + f"Current session: {self.session_name}" + Style.RESET_ALL)
-            print(Fore.YELLOW + f"You have chosen this number prefix: {PREFIX}" + Style.RESET_ALL)
+            print(Fore.YELLOW +
+                  f"Current session: {self.session_name}" + Style.RESET_ALL)
+            print(
+                Fore.YELLOW + f"You have chosen this number prefix: {PREFIX}" + Style.RESET_ALL)
             print("""
                 1. Send messages
                 2. Send messages with media attached
@@ -115,6 +124,7 @@ class Menu:
         self.bot.options = [include_names, False]
         print("PREFIX", PREFIX)
         self.bot.login(PREFIX)
+        self.bot.send_messages_to_all_contacts()
 
     def send_with_media(self):
         print(Fore.GREEN + "SEND MESSAGES WITH MEDIA" + Style.RESET_ALL)
@@ -185,8 +195,8 @@ class Menu:
     def generate_chat_history(self):
         """Extract and save chat history"""
         print(Fore.GREEN + "EXTRACTING CHAT HISTORY" + Style.RESET_ALL)
-        self.bot = Bot()
-        self.bot.login()
+        self.bot = self.create_bot()
+        self.bot.login(PREFIX)
 
         from chat_extractor import ChatExtractor
         extractor = ChatExtractor(self.bot)

@@ -3,6 +3,8 @@
 __pycache__
 logs/*
 data/*
+temp/*
+Downloads
 
 chrome-data/
 wa-env/
@@ -10,3 +12,6 @@ wa-env/
 
 venv/
 output
+
+notebooks/data/
+notebooks/Downloads
