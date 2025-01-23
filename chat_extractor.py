@@ -20,17 +20,19 @@ from config import GROUP_ANALYZE, TEMP_DIR, OUTPUT_DIR, RECEIPT_KEYWORDS
 import urllib.request
 from browser_handler import retry_on_connection_error
 from selenium.common.exceptions import StaleElementReferenceException
+from logger import logger
 
 
 class ChatExtractor:
     def __init__(self, bot):
         self.bot = bot
+        logger.debug("Initializing ChatExtractor")
         self.setup_tesseract()
         self.temp_dir = TEMP_DIR
         self.output_dir = OUTPUT_DIR
 
     def setup_tesseract(self):
-        """Configure Tesseract to use local language files in the venv"""
+        """Configure Tesseract to use local language files in the venv, used to extract text from images"""
         venv_path = os.environ.get('VIRTUAL_ENV', '.venv')
         tessdata_path = os.path.join(venv_path, 'tessdata')
         os.makedirs(tessdata_path, exist_ok=True)
@@ -44,46 +46,53 @@ class ChatExtractor:
 
         os.environ['TESSDATA_PREFIX'] = tessdata_path
 
-    def extract_contact_number(self):
+    def _extract_contact_number(self):
         '''Extract contact number from profile details'''
+        logger.debug("Attempting to extract contact number")
+
         # Click on Profile details
         profile_details = self.bot.driver.find_elements(
             By.XPATH, "//div[@title='Profile details']")
         if len(profile_details) > 0:
+            logger.debug("Found profile details button, clicking...")
             profile_details[0].click()
             sleep(2)
         else:
-            print(f'profile_details not found')
+            logger.warning("Profile details button not found")
             return None
 
         # Check if the chat is a group
+        logger.debug("Checking if chat is a group")
         group_text = self.bot.driver.find_elements(
             By.XPATH,
             "//section[contains(@class, 'x2lah0s')]//span[contains(text(), 'Group')]"
         )
         if len(group_text) > 0:
             if GROUP_ANALYZE:
-                # Do something
-                print(f'group_text: {group_text[0].text}')
+                logger.debug(f"Group chat detected: {group_text[0].text}")
             else:
-                print(f'not analize group')
-                # sair do loop for e pular para o proximo chat
+                logger.info(
+                    "Group chat detected but GROUP_ANALYZE is disabled, skipping")
                 return
+        else:
+            logger.debug("Not a group chat")
 
         phone_number = None
         # Check if the chat is a business
+        logger.debug("Checking if chat is a business account")
         business_text = self.bot.driver.find_elements(
             By.XPATH,
             "//div[contains(@class, 'x1iyjqo2') and contains(text(), 'This is a business account')]"
         )
+
         if len(business_text) > 0:
+            logger.debug("Business account detected, using business xpath")
             phone_element = self.bot.driver.find_elements(
                 By.XPATH,
                 "//div[@class='xkhd6sd  _ajxt']"
             )
-
         else:
-            print(f'not business')
+            logger.debug("Personal account detected, using personal xpath")
             phone_element = self.bot.driver.find_elements(
                 By.XPATH,
                 "//section[contains(@class, 'x2lah0s')]//span[@class='x1jchvi3 x1fcty0u x40yjcy']"
@@ -91,145 +100,306 @@ class ChatExtractor:
 
         if len(phone_element) > 0:
             phone_number = phone_element[0].text
-            print(f'phone_number: {phone_number}')
+            logger.debug(
+                f"Successfully extracted phone number: {phone_number}")
+        else:
+            logger.warning("Phone number element not found")
 
         # close profile details
+        logger.debug("Attempting to close profile details")
         close_button = self.bot.driver.find_elements(
             By.XPATH,
             "//span[@data-icon='x']"
         )
         if len(close_button) > 0:
             close_button[0].click()
+            logger.debug("Profile details closed successfully")
             sleep(2)
         else:
-            print(f'close_button not found')
+            logger.warning("Close button not found")
+
         return phone_number
+
+    def _has_to_update_chat_by_name(self, chat, name):
+        """Check if chat needs to be updated based on name"""
+        logger.debug(f"Checking if chat '{name}' needs update")
+
+        contact = self.bot.db.get_contact_by_name(name)
+        if not contact:
+            logger.debug(f"No previous contact record found for {name}")
+            return True
+
+        last_date_elements = chat.find_elements(
+            By.XPATH, ".//div[@class='_ak8i']")
+        if len(last_date_elements) == 0:
+            logger.debug("No last date element found")
+            return True
+
+        last_date = last_date_elements[0].text
+        logger.debug(f"Found last date: {last_date}")
+
+        last_message_timestamp = contact.last_message_timestamp
+        if last_message_timestamp is None:
+            logger.debug("No previous message timestamp found")
+            return True
+
+        logger.debug(f"last_message_timestamp: {last_message_timestamp}")
+
+        # Ensure we're working with UTC
+        local_tz = pytz.timezone('America/Sao_Paulo')
+        utc = pytz.UTC
+
+        day_last_message_saved = last_message_timestamp.astimezone(utc).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        logger.debug(f"Last saved message day: {day_last_message_saved}")
+
+        # Date format analysis
+        if re.match(r'\d{2}/\d{2}/\d{4}', last_date):
+            logger.debug("Date format: DD/MM/YYYY")
+            naive_date = datetime.strptime(last_date, '%d/%m/%Y')
+            last_date = local_tz.localize(naive_date).astimezone(utc)
+            needs_update = last_date > day_last_message_saved
+        elif re.match(r'\d{2}:\d{2}', last_date):
+            logger.debug("Date format: Today HH:MM")
+            today = datetime.now()
+            time = datetime.strptime(last_date, '%H:%M')
+            naive_date = today.replace(hour=time.hour, minute=time.minute)
+            last_date = local_tz.localize(naive_date).astimezone(utc)
+            needs_update = last_date > last_message_timestamp
+        elif re.match(r'[A-Za-z]+', last_date):
+            logger.debug(f"Date format: Day name ({last_date})")
+            needs_update = self._process_day_name_date(
+                last_date, day_last_message_saved)
+        else:
+            logger.warning(f"Unknown date format: {last_date}")
+            needs_update = True
+
+        logger.debug(
+            f"Chat needs update: {needs_update}, contact.is_complete: {contact.is_complete}")
+        needs_update = needs_update and not contact.is_complete
+        return needs_update
 
     @retry_on_connection_error(max_retries=3)
     def extract_all_chats(self):
         """Extract messages from all chats"""
         all_chats = set()
+        new_last_seen_name = None
+        last_seen_name = None
 
+        if self.bot._first_time_login:
+            sleep(60)  # wait for whatsapp to load chats
+            self.bot._first_time_login = False
+
+        # loop (scroll) to get all chats
         while True:
+            last_seen_name = new_last_seen_name
+
             chat_items = self.bot.driver.find_elements(
                 By.XPATH,
-                "//div[@aria-label='Lista de conversas']//div[@role='listitem']"
+                "//div[@aria-label='Lista de conversas' or @aria-label='Chat list']//div[@role='listitem']"
             )
 
-            if not chat_items:
-                chat_items = self.bot.driver.find_elements(
-                    By.XPATH,
-                    "//div[@aria-label='Chat list']//div[@role='listitem']"
-                )
+            if len(chat_items) == 0:
+                print(f'No chats found')
+                break
 
-            already_collected_chats = []
-            for chat in chat_items:
+            for i, chat in enumerate(chat_items):
                 try:
                     name = chat.find_element(
                         By.XPATH,
                         ".//span[@dir='auto']"
                     ).text
 
+                    # Update the last seen name at the end of the list
+                    if i == len(chat_items) - 1:
+                        new_last_seen_name = name
+                        chat.click()
+                        sleep(2)
+
                     if name not in all_chats:
                         all_chats.add(name)
                         self._current_chat_name = name
+
+                        has_to_update = self._has_to_update_chat_by_name(
+                            chat, name)
+                        if not has_to_update:
+                            print(f'Chat {name} is up to date, skipping...')
+                            continue
+
                         chat.click()
-                        sleep(2)
+                        sleep(0.2)
                         # Init Contact
-                        number = self.extract_contact_number()
+                        number = self._extract_contact_number()
                         if not number:
                             print(f'No number found for {name}, skipping...')
                             continue
 
                         contact = Contact(name, number, self.bot.db)
 
-                        messages = self.get_all_messages(contact)
+                        self._get_all_messages(contact)
 
-                        self._save_messages_to_file(name, messages)
                         chat.click()
                         sleep(2)
                         self._current_chat_name = None
-                    else:
-                        already_collected_chats.append(name)
+
                 except Exception as e:
                     print(f"Error processing chat: {e}")
                     self._current_chat_name = None
 
-            if len(already_collected_chats) == len(chat_items):
+            if last_seen_name != None and new_last_seen_name == last_seen_name:
                 break
 
             self._scroll_chats_list()
 
         return all_chats
 
-    def get_all_messages(self, contact: Contact):
+    def _get_all_messages(self, contact: Contact):
         """Extract all messages from current chat"""
+        logger.info(
+            f"Starting message extraction for contact: {contact.name} ({contact.number})")
+
         conversation_container = self.bot.driver.find_element(
             By.XPATH, '//*[@id="main"]/div[3]/div/div[2]'
         )
 
-        previous_height = 0
         previous_message_count = 0
         messages_elements = []
-
         got_the_oldest_messages = False
-        sleep(random.randint(2, 5))
+        messages_processed = set()
+        utc = pytz.UTC
+        # TODO: TRY GET ONLY THE MESSAGE WITH ERROR
         while True:
             try:
+                logger.debug("Fetching message elements")
                 messages_elements = conversation_container.find_elements(
                     By.CSS_SELECTOR, ".message-in, .message-out"
                 )
 
                 if len(messages_elements) == 0:
+                    logger.warning("No messages found in conversation")
                     break
 
+                messages_elements.reverse()
+                logger.debug(f"Processing {len(messages_elements)} messages")
+
+                for i, message in enumerate(messages_elements):
+                    try:
+                        if message in messages_processed:
+                            logger.debug("Message already processed, skipping")
+                            continue
+
+                        logger.debug(
+                            f"Processing message {i+1}/{len(messages_elements)}")
+
+                        # Highlight current message
+                        self.bot.driver.execute_script(
+                            "arguments[0].style.backgroundColor = 'rgba(0, 0, 0, 0.3)';",
+                            message
+                        )
+
+                        message_not_analyzed = self._get_single_message_info(
+                            message, contact, analyze=False)
+
+                        if not message_not_analyzed:
+                            logger.error(
+                                f"Failed to process message for {contact.number}")
+                            break
+
+                        msg_timestamp = datetime.fromisoformat(
+                            message_not_analyzed['timestamp_utc']) if message_not_analyzed['timestamp_utc'] else None
+
+                        if contact.is_complete and contact.last_message_timestamp and msg_timestamp:
+                            # Garantir que last_message_timestamp seja datetime
+                            last_msg_timestamp = (
+                                datetime.fromisoformat(
+                                    contact.last_message_timestamp)
+                                if isinstance(contact.last_message_timestamp, str)
+                                else contact.last_message_timestamp
+                            )
+
+                            if msg_timestamp.astimezone(utc) >= last_msg_timestamp.astimezone(utc):
+                                logger.info(
+                                    "Reached already processed messages, stopping")
+                                return
+
+                        if contact.first_message_found_timestamp and msg_timestamp:
+                            # Garantir que first_message_found_timestamp seja datetime
+                            first_msg_timestamp = (
+                                datetime.fromisoformat(
+                                    contact.first_message_found_timestamp)
+                                if isinstance(contact.first_message_found_timestamp, str)
+                                else contact.first_message_found_timestamp
+                            )
+
+                            if msg_timestamp.astimezone(utc) > first_msg_timestamp.astimezone(utc):
+                                logger.info(
+                                    "Reached first message found, continuing to next message...")
+                                messages_processed.add(message)
+                                continue
+
+                        message_info = self._get_single_message_info(
+                            message, contact)
+
+                        if self.bot.db.message_exists(message_info):
+                            logger.debug(
+                                "Message already exists in DB, skipping")
+                            messages_processed.add(message)
+                            continue
+
+                        self._save_single_message(
+                            message_info, contact, i == len(messages_elements) - 1)
+                        messages_processed.add(message)
+                        logger.debug(f"Message saved: {message_info}")
+
+                    except StaleElementReferenceException:
+                        logger.warning(
+                            f"Stale element encountered for message {i+1}, attempting to recover")
+                        # Add recovery logic here
+                    except Exception as e:
+                        logger.exception(f"Error processing message {i+1}")
+                    finally:
+                        try:
+                            self._check_media_unavailable_message()
+                            # Reset background color
+                            self.bot.driver.execute_script(
+                                "arguments[0].style.backgroundColor = '';",
+                                message
+                            )
+
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to reset message highlight: {e}")
+
                 if len(messages_elements) == previous_message_count:
+                    logger.info(
+                        "No new messages found, marking chat as complete")
+                    contact.is_complete = True
+                    contact.update_is_complete(True)
                     ws_msg = conversation_container.find_elements(
                         By.XPATH, "//div[contains(text(), 'Use WhatsApp on your phone to see older messages')]"
                     )
                     got_the_oldest_messages = len(ws_msg) == 0
                     contact.is_first_message = got_the_oldest_messages
+                    if contact.is_first_message:
+                        contact.update_is_first_message(True)
+
                     break
 
                 previous_message_count = len(messages_elements)
+
             except Exception as e:
-                print(f"Error getting messages: {e}")
+                logger.exception("Error in message extraction loop")
                 break
 
-            # get last message date
             try:
-                last_message_date = None
-                date_text = messages_elements[len(messages_elements) - 1].find_element(
-                    By.CSS_SELECTOR, ".copyable-text").get_attribute(
-                    "data-pre-plain-text")
-                if date_text:
-                    date_parts = date_text.split('] ')[
-                        0].replace('[', '').split(', ')
-                    time = date_parts[0]
-                    date = date_parts[1]
-                    last_message_date = convert_to_utc(date, time)
-
-                # check if last message date is the same as the last message timestamp
-                if last_message_date and contact.last_message_timestamp:
-                    # Normalize both timestamps to ISO format for comparison
-                    last_message_str = last_message_date.isoformat()
-                    contact_message_str = contact.last_message_timestamp
-                    if last_message_str == contact_message_str and not contact.try_to_get_messages_error:
-                        print(
-                            f"Last message date is the same as the last message timestamp, the messages are up to date...")
-                        return contact.messages
-            except Exception as e:
-                print(f"Error getting last message date: {e}")
-
-            try:
-                print('Attempting to scroll')
+                logger.debug("Attempting to scroll conversation")
                 self.bot.driver.execute_script(
                     "arguments[0].scrollTop = 0;",
                     conversation_container
                 )
                 sleep(random.randint(1, 3))
             except Exception as e:
-                print(f"Error scrolling: {e}")
+                logger.exception("Error scrolling conversation")
                 break
 
             try:
@@ -241,29 +411,131 @@ class ChatExtractor:
                         older_messages_button[0].click()
                         sleep(10)
                     except StaleElementReferenceException:
-                        print(
+                        logger.warning(
                             "Stale element when clicking older messages button, continuing...")
 
             except Exception as e:
-                print(f"Error getting older messages: {e}")
+                logger.error(f"Error getting older messages: {e}")
 
-        # TODO: TRY GET ONLY THE MESSAGE WITH ERROR
-        # TODO: GET ONLY NEW MESSAGES
-        return self._get_all_message_info(messages_elements, contact)
+    def _get_single_message_info(self, message, contact, analyze=True):
+        """Extract information from a single message element"""
+        try:
+            logger.debug(f"Processing single message for {contact.name}")
 
-    def check_media_unavailable_message(self):
-        # Check for "Media message unavailable" dialog
+            self._check_media_unavailable_message()
+
+            quoted_message = error_quoted = None
+            if analyze:
+                logger.debug("Analyzing quoted message")
+                quoted_message, error_quoted = self._get_quoted_message(
+                    message)
+
+            logger.debug("Getting message text and metadata")
+            text, time, date, sender, utc_dt, error_message = self._get_message_text_and_metadata(
+                message, analyze)
+
+            logger.debug("Processing attachments")
+            attachment_data, utc_dt_attach, time_attach, date_attach = self._process_attachments(
+                message, analyze)
+
+            # Update error handling to include attachment errors
+            error = error_message if error_message else error_quoted
+            if attachment_data and attachment_data.get('error'):
+                error = attachment_data.get('error')
+
+            timestamp_utc = utc_dt.isoformat() if utc_dt else None
+            timestamp_utc_attach = utc_dt_attach.isoformat() if utc_dt_attach else None
+
+            return {
+                "text": text,
+                "time": time if not attachment_data else time_attach,
+                "date": date if not attachment_data else date_attach,
+                "sender": sender,
+                "quoted_message": quoted_message,
+                "attachment_data": attachment_data,
+                "timestamp_utc": timestamp_utc if not attachment_data else timestamp_utc_attach,
+                "error": error,
+                "is_sent": contact.name == sender
+            }
+
+        except Exception as e:
+            logger.exception("Error processing single message")
+            return None
+
+    def _save_single_message(self, message_info, contact, is_latest):
+        """Save a single message to the database"""
+        message_data = json.dumps(message_info)
+
+        # Save to database
+        saved = contact.db.save_chat_history(
+            contact.number,
+            message_data,
+            message_info["timestamp_utc"],
+            message_info["is_sent"],
+            message_info["attachment_data"].get(
+                "type") if message_info["attachment_data"] else "",
+            message_info["error"]
+        )
+
+        if not saved:
+            logger.warning("Warning: Failed to save message to database")
+            return
+
+        # Update contact's first/last message info
+        if is_latest:
+            contact.update_last_message(
+                message_info["text"], message_info["timestamp_utc"])
+        else:
+            contact.update_first_message(
+                message_info["text"], message_info["timestamp_utc"], False)
+
+    def _check_media_unavailable_message(self):
+        """Check and handle media unavailable messages"""
+        logger.debug("Checking for media unavailable message")
+
+        def try_close_media_message(max_retries=3, delay=1):
+            for attempt in range(max_retries):
+                try:
+                    ok_button = self.bot.driver.find_element(
+                        By.XPATH, "//button[.//div[contains(text(), 'OK')]]"
+                    )
+                    # Tentar scroll para garantir visibilidade
+                    self.bot.driver.execute_script(
+                        "arguments[0].scrollIntoView(true);", ok_button)
+                    sleep(0.5)
+
+                    # Tentar primeiro com click normal
+                    try:
+                        ok_button.click()
+                    except:
+                        # Se falhar, tentar com JavaScript
+                        self.bot.driver.execute_script(
+                            "arguments[0].click();", ok_button)
+
+                    logger.debug(
+                        "Successfully closed media unavailable message")
+                    sleep(0.2)
+                    return True
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        logger.warning(
+                            f"Failed to close media message (attempt {attempt + 1}/{max_retries}): {e}")
+                        sleep(delay)
+                    else:
+                        logger.error(
+                            f"Failed to close media message after {max_retries} attempts: {e}")
+                        return False
+            return False
+
         media_unavailable = self.bot.driver.find_elements(
             By.XPATH, "//h1[contains(text(), 'Media message unavailable')]"
         )
         if media_unavailable:
-            # Click OK button
-            ok_button = self.bot.driver.find_element(
-                By.XPATH, "//button[.//div[contains(text(), 'OK')]]"
-            )
-            ok_button.click()
-            sleep(1)
+            logger.debug(
+                "Media unavailable message found, attempting to close")
+            try_close_media_message()
 
+    # TODO: REMOVE THIS, NOT USING IT NOW
     def _get_all_message_info(self, messages_elements, contact: Contact):
         """Extract information from message elements"""
         messages = []
@@ -274,7 +546,7 @@ class ChatExtractor:
 
         for index, message in enumerate(messages_elements):
             try:
-                self.check_media_unavailable_message()
+                self._check_media_unavailable_message()
 
                 time, date, sender, utc_dt, error = None, None, None, None, None
 
@@ -303,7 +575,7 @@ class ChatExtractor:
                     "timestamp_utc": timestamp_utc if not attachment_data else timestamp_utc_attach,
                     "error": error
                 })
-                print(
+                logger.debug(
                     f"Processing message {index + 1}/{len(messages_elements)}")
 
                 if error:
@@ -339,7 +611,7 @@ class ChatExtractor:
                 messages.append(message_data)
 
             except Exception as e:
-                print(f"Error processing message {index + 1}: {e}")
+                logger.error(f"Error processing message {index + 1}: {e}")
                 contact.try_to_get_messages_error = True
                 # Continue processing remaining messages even if one fails
                 continue
@@ -365,12 +637,15 @@ class ChatExtractor:
                         "text": quoted_text[0].text
                     }, None
             except Exception as e:
-                print(f"Error processing quoted message: {e}")
+                logger.error(f"Error processing quoted message: {e}")
                 return None, str(e)
         return None, None
 
-    def _get_message_text_and_metadata(self, message):
-        """Extract message text and metadata"""
+    def _get_message_text_and_metadata(self, message, analyze=True):
+        """
+        Extract message text and metadata
+        return: text, time, date, sender, utc_dt, error
+        """
         text = ''
         time = date = sender = utc_dt = error = None
 
@@ -381,11 +656,11 @@ class ChatExtractor:
             main_text_element = message.find_elements(
                 By.CSS_SELECTOR, "span.selectable-text.copyable-text"
             )
-            if main_text_element:
+            if main_text_element and analyze:
                 try:
                     text = decode_latin(main_text_element[0].text.strip())
                 except Exception as e:
-                    print(f"Error processing main text: {e}")
+                    logger.error(f"Error processing main text: {e}")
                     error = str(e)
 
             try:
@@ -399,13 +674,15 @@ class ChatExtractor:
                     sender = date_text.split('] ')[1].replace(': ', '')
                     utc_dt = convert_to_utc(date, time)
             except Exception as e:
-                print(f"Error processing date: {e}")
+                logger.error(f"Error processing date: {e}")
                 error = str(e)
 
         return text, time, date, sender, utc_dt, error
 
     def _get_date_of_attach_msg(self, message):
-        """Get date of attach message"""
+        """Get date of attach message
+        return: utc_dt_attach, time_attach, date_attach
+        """
         date_attach = None
         time_attach = None
         utc_dt_attach = None
@@ -479,88 +756,120 @@ class ChatExtractor:
 
         return utc_dt_attach, time_attach, date_attach
 
-    def _process_attachments(self, message):
-        """Process any attachments in the message"""
+    def _process_attachments(self, message, analyze=True):
+        """
+        Process any attachments in the message
+        @params: 
+            message: WebElement
+            analyze: bool, default True (if True, download and analyze the attachment)
+        return: attachment_data, utc_dt_attach, time_attach, date_attach
+        """
         from config import IMAGE_ANALYZE, PDF_ANALYZE, AUDIO_ANALYZE
+        logger.debug("Starting attachment processing")
+
         # Check for images
         image_elements = message.find_elements(
             By.CSS_SELECTOR, "img[data-testid='image-thumb'], img[class*='x15kfjtz']"
         )
-        if image_elements and IMAGE_ANALYZE:
+        if image_elements:
+            logger.debug("Image attachment found")
             utc_dt_attach, time_attach, date_attach = self._get_date_of_attach_msg(
                 message)
-            self.bot.driver.execute_script(
-                "arguments[0].scrollIntoView(true);", image_elements[0])
-            sleep(1)
-            return self._process_image_attachment(image_elements[0]), utc_dt_attach, time_attach, date_attach
-        elif image_elements and not IMAGE_ANALYZE:
-            return {
-                "type": "image",
-                "size": None,
-                "file_path": None,
-                "content": None,
-                "is_receipt": False,
-                "error": "Image analysis disabled"
-            }, None, None, None
+            # TODO: CHECK ERROR INFINITE LOADING
+            if IMAGE_ANALYZE and analyze:
+                logger.debug("Image analysis enabled, processing image")
+                self.bot.driver.execute_script(
+                    "arguments[0].scrollIntoView(true);", image_elements[0])
+                sleep(1)
+                result = self._process_image_attachment(image_elements[0])
+                logger.debug(f"Image processing result: {result}")
+                return result, utc_dt_attach, time_attach, date_attach
+            else:
+                logger.debug("Image analysis disabled")
+                return {
+                    "type": "image",
+                    "size": None,
+                    "file_path": None,
+                    "content": None,
+                    "is_receipt": False,
+                    "error": "Image analysis disabled"
+                }, utc_dt_attach, time_attach, date_attach
 
         # Check for PDF
         pdf_elements = message.find_elements(
             By.CSS_SELECTOR, "div[role='button'][title^='Download']"
         )
-        if pdf_elements and PDF_ANALYZE:
+        if pdf_elements:
+            logger.debug("PDF attachment found")
             utc_dt_attach, time_attach, date_attach = self._get_date_of_attach_msg(
                 message)
-            self.bot.driver.execute_script(
-                "arguments[0].scrollIntoView(true);", pdf_elements[0])
-            sleep(1)
-            return self._process_pdf_attachment(pdf_elements[0]), utc_dt_attach, time_attach, date_attach
-        elif pdf_elements and not PDF_ANALYZE:
-            return {
-                "type": "document",
-                "name": None,
-                "size": None,
-                "file_type": "PDF",
-                "content": None,
-                "is_receipt": False,
-                "error": "PDF analysis disabled"
-            }, None, None, None
+
+            if PDF_ANALYZE and analyze:
+                logger.debug("PDF analysis enabled, processing document")
+                self.bot.driver.execute_script(
+                    "arguments[0].scrollIntoView(true);", pdf_elements[0])
+                sleep(1)
+                result = self._process_pdf_attachment(pdf_elements[0])
+                logger.debug(f"PDF processing result: {result}")
+                return result, utc_dt_attach, time_attach, date_attach
+            else:
+                logger.debug("PDF analysis disabled")
+                return {
+                    "type": "document",
+                    "name": None,
+                    "size": None,
+                    "file_type": "PDF",
+                    "content": None,
+                    "is_receipt": False,
+                    "error": "PDF analysis disabled"
+                }, utc_dt_attach, time_attach, date_attach
 
         # Check for audio
         download_audio_button = message.find_elements(
             By.CSS_SELECTOR, "button[aria-label='Download voice message']"
         )
-        if download_audio_button and AUDIO_ANALYZE:
-            self.bot.driver.execute_script(
-                "arguments[0].scrollIntoView(true);", download_audio_button[0])
-            sleep(1)
-            download_audio_button[0].click()
-            sleep(2)
-
+        if download_audio_button:
+            logger.debug("Audio attachment with download button found")
+            if AUDIO_ANALYZE and analyze:
+                self.bot.driver.execute_script(
+                    "arguments[0].scrollIntoView(true);", download_audio_button[0])
+                sleep(1)
+                download_audio_button[0].click()
+                sleep(2)
+        # TODO: CLICAR E DEIXAR 2X O AUDIO
         audio_play_button = message.find_elements(
             By.CSS_SELECTOR, 'button[aria-label="Play voice message"]'
         )
         duration_text = "0:00"
-        if audio_play_button and AUDIO_ANALYZE:
+        if audio_play_button:
+            # TODO: CHECK ERROR INFINITE LOADING
+            logger.debug("Audio attachment with play button found")
             utc_dt_attach, time_attach, date_attach = self._get_date_of_attach_msg(
                 message)
-            self.bot.driver.execute_script(
-                "arguments[0].scrollIntoView(true);", audio_play_button[0])
-            sleep(1)
-            duration_element = message.find_elements(
-                By.CSS_SELECTOR, "div._ak8w"
-            )
-            if duration_element:
-                duration_text = duration_element[0].text if duration_element else "0:00"
+            if AUDIO_ANALYZE and analyze:
+                logger.debug("Audio analysis enabled, processing audio")
+                self.bot.driver.execute_script(
+                    "arguments[0].scrollIntoView(true);", audio_play_button[0])
+                sleep(1)
+                duration_element = message.find_elements(
+                    By.CSS_SELECTOR, "div._ak8w"
+                )
+                if duration_element:
+                    duration_text = duration_element[0].text if duration_element else "0:00"
+                result = self._process_audio_attachment(
+                    audio_play_button, duration_text)
+                logger.debug(f"Audio processing result: {result}")
+                return result, utc_dt_attach, time_attach, date_attach
+            else:
+                logger.debug("Audio analysis disabled")
+                return {
+                    "type": "audio",
+                    "duration": duration_text,
+                    "transcription": None,
+                    "error": "Audio analysis disabled"
+                }, utc_dt_attach, time_attach, date_attach
 
-            return self._process_audio_attachment(audio_play_button, duration_text), utc_dt_attach, time_attach, date_attach
-        elif audio_play_button and not AUDIO_ANALYZE:
-            return {
-                "type": "audio",
-                "duration": duration_text,
-                "transcription": None,
-                "error": "Audio analysis disabled"
-            }, None, None, None
-
+        logger.debug("No attachments found")
         return None, None, None, None
 
     def _process_image_attachment(self, image_element):
@@ -591,14 +900,7 @@ class ChatExtractor:
                     "error": "No image container found"
                 }
 
-            try:
-                size_button = image_container[0].find_elements(
-                    By.CSS_SELECTOR, "button[class*='x6s0dn4'] span:last-child")
-                file_size = size_button[0].text if size_button else None
-            except Exception as e:
-                print(f"Could not find image size: {e}")
-                file_size = None
-
+            # TODO: CHECK ERROR INFINITE LOADING
             def click_and_process_image():
                 try:
                     img_elements = image_container[0].find_elements(
@@ -656,16 +958,21 @@ class ChatExtractor:
 
                     image = image.crop((left, top, right, bottom))
 
+                    image_size_bytes = len(image.tobytes())
+
                     text = pytesseract.image_to_string(image, lang='por')
 
                     from config import RECEIPT_KEYWORDS
                     is_receipt = is_receipt_by_keywords(text, RECEIPT_KEYWORDS)
 
-                    file_path = os.path.join(
-                        self.temp_dir,
-                        f"image_{datetime.now().timestamp()}.png"
-                    )
-                    image.save(file_path)
+                    if is_receipt:
+                        file_path = os.path.join(
+                            self.temp_dir,
+                            f"image_{datetime.now().timestamp()}.png"
+                        )
+                        image.save(file_path)
+                    else:
+                        file_path = None
 
                     ActionChains(self.bot.driver).send_keys(
                         Keys.ESCAPE).perform()
@@ -673,13 +980,13 @@ class ChatExtractor:
 
                     return {
                         "type": "image",
-                        "size": file_size,
+                        "size": image_size_bytes,
                         "file_path": file_path,
                         "content": text,
                         "is_receipt": is_receipt
                     }
                 except Exception as e:
-                    print(f"Error processing image: {e}")
+                    logger.error(f"Error processing image: {e}")
                     try:
                         ActionChains(self.bot.driver).send_keys(
                             Keys.ESCAPE).perform()
@@ -690,7 +997,7 @@ class ChatExtractor:
             return click_and_process_image()
 
         except Exception as e:
-            print(f"Error processing image attachment: {e}")
+            logger.error(f"Error processing image attachment: {e}")
             try:
                 # Always try to close modal if something goes wrong
                 ActionChains(self.bot.driver).send_keys(Keys.ESCAPE).perform()
@@ -738,15 +1045,16 @@ class ChatExtractor:
             max_wait = 30
             start_time = datetime.now()
             downloaded_file = None
+            downloads_path = os.path.join(os.path.expanduser('~'), 'Downloads')
 
-            print(f"Waiting for PDF to download in {self.temp_dir}")
+            logger.debug(f"Waiting for PDF to download in {downloads_path}")
             while (datetime.now() - start_time).total_seconds() < max_wait:
-                files = os.listdir(self.temp_dir)
+                files = os.listdir(downloads_path)
                 pdf_files = [f for f in files if f.endswith(
                     '.pdf') and not f.endswith('.crdownload')]
                 if pdf_files:
                     downloaded_file = os.path.join(
-                        self.temp_dir, pdf_files[0])
+                        downloads_path, pdf_files[0])
                     break
                 sleep(1)
 
@@ -786,7 +1094,7 @@ class ChatExtractor:
                 }
 
         except Exception as e:
-            print(f"Error processing PDF: {e}")
+            logger.error(f"Error processing PDF: {e}")
             return {
                 "type": "document",
                 "error": str(e),
@@ -826,11 +1134,12 @@ class ChatExtractor:
                                 audio_request = event['params']
                                 break
                         except Exception as e:
-                            print(f"Error parsing log entry: {e}")
+                            logger.error(
+                                f"Error parsing log entry: {e}")
                             continue
 
                     if audio_request:
-                        print(
+                        logger.debug(
                             f"Found audio request: {audio_request['requestId']}")
                         response = self.bot.driver.execute_cdp_cmd(
                             'Network.getResponseBody',
@@ -865,23 +1174,25 @@ class ChatExtractor:
                             return {
                                 "type": "audio",
                                 "duration": duration_text,
-                                "transcription": transcription
+                                "transcription": transcription,
+                                "error": "Transcription failed" if transcription is None else None
                             }
 
                 except Exception as e:
-                    print(
+                    logger.error(
                         f"Error processing audio (attempt {attempt + 1}): {e}")
                     if attempt < max_retries - 1:
-                        print(f"Retrying... ({attempt + 1}/{max_retries})")
+                        logger.info(
+                            f"Retrying... ({attempt + 1}/{max_retries})")
                     else:
-                        print("Max retries reached")
+                        logger.error("Max retries reached")
 
             # Disable logging
             self.bot.driver.execute_cdp_cmd('Performance.disable', {})
             self.bot.driver.execute_cdp_cmd('Network.disable', {})
 
         except Exception as e:
-            print(f"Error processing audio: {e}")
+            logger.error(f"Error processing audio: {e}")
             try:
                 self.bot.driver.execute_cdp_cmd('Performance.disable', {})
                 self.bot.driver.execute_cdp_cmd('Network.disable', {})
@@ -895,34 +1206,11 @@ class ChatExtractor:
     def _transcribe_audio(self, audio_path):
         """Transcribe audio using Whisper"""
         try:
-            # Try using MPS (Apple Silicon)
-            model = WhisperModel("base", device="mps", compute_type="float16")
-        except Exception as e:
-            print(f"Error using MPS: {e}")
-            print("Falling back to CPU...")
-            # Fallback to CPU
+            logger.debug("Transcribing audio using Whisper")
             model = WhisperModel("base", device="cpu", compute_type="float32")
 
-        segments, info = model.transcribe(audio_path, language="pt")
-        return " ".join([segment.text for segment in segments])
-
-    # def _restore_context(self):
-    #     """Restore chat context after reconnection"""
-    #     try:
-    #         # Se estávamos em um chat específico, tentar voltar para ele
-    #         if hasattr(self, '_current_chat_name'):
-    #             # Procurar pela caixa de pesquisa
-    #             search_box = self.bot.driver.find_element(
-    #                 By.XPATH,
-    #                 "//div[contains(@class, 'x1hx0egp')][@role='textbox']"
-    #             )
-    #             if search_box:
-    #                 search_box.click()
-    #                 search_box.send_keys(self._current_chat_name)
-    #                 search_box.send_keys(Keys.ENTER)
-    #                 sleep(2)
-    #     except Exception as e:
-    #         print(f"Error restoring context: {e}")
-
-    # Adicionar aqui os outros métodos do notebook
-    # get_all_messages(), process_image_attachment(), etc.
+            segments, info = model.transcribe(audio_path, language="pt")
+            return " ".join([segment.text for segment in segments])
+        except Exception as e:
+            logger.error(f"Error transcribing audio: {e}")
+            return None

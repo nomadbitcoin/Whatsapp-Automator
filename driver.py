@@ -36,17 +36,23 @@ class Contact:
         if contact:
             self.number = contact[0]
             self.name = contact[1]
-            self.created_at = contact[2]
-            self.updated_at = contact[3]
+            self.created_at = datetime.fromisoformat(
+                contact[2]) if contact[2] else None
+            self.updated_at = datetime.fromisoformat(
+                contact[3]) if contact[3] else None
             self.last_message = contact[4]
-            self.last_message_timestamp = contact[5]
+            self.last_message_timestamp = datetime.fromisoformat(
+                contact[5]) if contact[5] else None
             self.first_message_found = contact[6]
-            self.first_message_found_timestamp = contact[7]
-            self.is_first_message = contact[8]
-            self.received_receipt = contact[9]
-            self.received_receipt_timestamp = contact[10]
-            self.is_ws_business = contact[11]
-            self.try_to_get_messages_error = contact[12]
+            self.first_message_found_timestamp = datetime.fromisoformat(
+                contact[7]) if contact[7] else None
+            self.is_first_message = bool(contact[8])
+            self.received_receipt = bool(contact[9])
+            self.received_receipt_timestamp = datetime.fromisoformat(
+                contact[10]) if contact[10] else None
+            self.is_ws_business = bool(contact[11])
+            self.try_to_get_messages_error = bool(contact[12])
+            self.is_complete = bool(contact[13])
             self.messages = messages
         else:
             self.number = number
@@ -62,31 +68,100 @@ class Contact:
             self.received_receipt_timestamp = None
             self.is_ws_business = False
             self.try_to_get_messages_error = False
+            self.is_complete = False
             self.messages = []
-            self.db.save_contact(self.number, self.name, self.last_message_timestamp, self.last_message, self.last_message_timestamp,
-                                 self.first_message_found, self.first_message_found_timestamp, self.is_first_message, self.received_receipt, self.received_receipt_timestamp, self.try_to_get_messages_error)
+            self.db.save_contact(self.number, self.name,  self.last_message, self.last_message_timestamp,
+                                 self.first_message_found, self.first_message_found_timestamp,
+                                 self.is_first_message, self.received_receipt, self.received_receipt_timestamp,
+                                 self.try_to_get_messages_error, self.is_complete)
 
     def __str__(self):
         return f"{self.name} | {self.number}"
 
     def update_last_message(self, message, timestamp):
+        """Update last message and timestamp"""
         self.last_message = message
-        self.last_message_timestamp = timestamp
-        self.db.save_contact(self.number, self.name, self.last_message_timestamp, self.last_message, self.last_message_timestamp,
-                             self.first_message_found, self.first_message_found_timestamp, self.is_first_message, self.received_receipt, self.received_receipt_timestamp, self.try_to_get_messages_error)
+        # Converter timestamp para datetime se for string
+        if isinstance(timestamp, str):
+            self.last_message_timestamp = datetime.fromisoformat(timestamp)
+        else:
+            self.last_message_timestamp = timestamp
 
-    def update_first_message(self, message, timestamp, is_first_message):
+        return self.db.save_contact(
+            self.number,
+            self.name,
+            self.last_message,
+            self.last_message_timestamp,
+            self.first_message_found,
+            self.first_message_found_timestamp,
+            self.is_first_message,
+            self.received_receipt,
+            self.received_receipt_timestamp,
+            self.try_to_get_messages_error,
+            self.is_complete
+        )
+
+    def update_first_message(self, message, timestamp_str, is_first_message=False):
+        """Update first message found"""
         self.first_message_found = message
-        self.first_message_found_timestamp = timestamp
+        # Converter timestamp para datetime se for string
+        if isinstance(timestamp_str, str):
+            self.first_message_found_timestamp = datetime.fromisoformat(
+                timestamp_str)
+        else:
+            self.first_message_found_timestamp = timestamp_str
         self.is_first_message = is_first_message
-        self.db.save_contact(self.number, self.name, self.last_message_timestamp, self.last_message, self.last_message_timestamp,
-                             self.first_message_found, self.first_message_found_timestamp, self.is_first_message, self.received_receipt, self.received_receipt_timestamp, self.try_to_get_messages_error)
+
+        return self.db.save_contact(
+            self.number,
+            self.name,
+            self.last_message,
+            self.last_message_timestamp,
+            self.first_message_found,
+            self.first_message_found_timestamp,
+            self.is_first_message,
+            self.received_receipt,
+            self.received_receipt_timestamp,
+            self.try_to_get_messages_error,
+            self.is_complete
+        )
 
     def update_received_receipt(self, timestamp):
+        """Update received receipt status and timestamp"""
         self.received_receipt = True
-        self.received_receipt_timestamp = timestamp
-        self.db.save_contact(self.number, self.name, self.last_message_timestamp, self.last_message, self.last_message_timestamp,
-                             self.first_message_found, self.first_message_found_timestamp, self.is_first_message, self.received_receipt, self.received_receipt_timestamp, self.try_to_get_messages_error)
+        # Converter timestamp para datetime se for string
+        if isinstance(timestamp, str):
+            self.received_receipt_timestamp = datetime.fromisoformat(timestamp)
+        else:
+            self.received_receipt_timestamp = timestamp
+
+        return self.db.save_contact(
+            self.number,
+            self.name,
+            self.last_message,
+            self.last_message_timestamp,
+            self.first_message_found,
+            self.first_message_found_timestamp,
+            self.is_first_message,
+            self.received_receipt,
+            self.received_receipt_timestamp,
+            self.try_to_get_messages_error,
+            self.is_complete
+        )
+
+    def update_is_complete(self, is_complete):
+        self.is_complete = is_complete
+        self.db.save_contact(self.number, self.name, self.last_message, self.last_message_timestamp,
+                             self.first_message_found, self.first_message_found_timestamp, self.is_first_message,
+                             self.received_receipt, self.received_receipt_timestamp, self.try_to_get_messages_error,
+                             self.is_complete)
+
+    def update_is_first_message(self, is_first_message):
+        self.is_first_message = is_first_message
+        self.db.save_contact(self.number, self.name, self.last_message, self.last_message_timestamp,
+                             self.first_message_found, self.first_message_found_timestamp, self.is_first_message,
+                             self.received_receipt, self.received_receipt_timestamp, self.try_to_get_messages_error,
+                             self.is_complete)
 
 
 class Bot:
@@ -129,6 +204,7 @@ class Bot:
         self._options = [False, False]  # [include_names, include_media]
         self._start_time = None
         self.__prefix = None
+        self._first_time_login = False
         # Selector may change in time
         self.__main_selector = "//p[@dir='ltr']"
         self.__fallback_selector = "//div[@class='x1hx0egp x6ikm8r x1odjw0f x1k6rcq7 x6prxxf']//p[@class='selectable-text copyable-text x15bjb6t x1n2onr6']"
@@ -174,9 +250,10 @@ class Bot:
                     success_message="Logged in successfully!",
                     error_message="Waiting for QR code to be scanned..."
                 )
-
                 if logged_in:
                     break  # Exit the loop on successful login
+                else:
+                    self._first_time_login = True
 
             except Exception as e:
                 page_load = True
