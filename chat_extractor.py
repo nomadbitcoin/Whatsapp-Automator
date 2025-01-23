@@ -283,12 +283,12 @@ class ChatExtractor:
                 logger.debug(f"Processing {len(messages_elements)} messages")
 
                 for i, message in enumerate(messages_elements):
-                    try:
-                        if message in messages_processed:
-                            logger.debug("Message already processed, skipping")
-                            continue
+                    if message in messages_processed:
+                        logger.debug("Message already processed, skipping")
+                        continue
 
-                        logger.debug(
+                    try:
+                        logger.info(
                             f"Processing message {i+1}/{len(messages_elements)}")
 
                         # Highlight current message
@@ -332,7 +332,7 @@ class ChatExtractor:
                             )
 
                             if msg_timestamp.astimezone(utc) > first_msg_timestamp.astimezone(utc):
-                                logger.info(
+                                logger.debug(
                                     "Reached first message found, continuing to next message...")
                                 messages_processed.add(message)
                                 continue

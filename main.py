@@ -63,7 +63,7 @@ def list_chrome_sessions():
 
 class Menu:
     def __init__(self):
-        self.session_name = list_chrome_sessions()
+        self.session_name = None
         self.bot = None
         self.choices = {
             "1": self.send_message,
@@ -209,17 +209,39 @@ class Menu:
         self.bot.quit_driver()
 
     def run(self):
+        # Check for command line arguments
+        if len(sys.argv) > 1 and sys.argv[1] == '--extract':
+            if len(sys.argv) != 3 or not sys.argv[2].startswith('--'):
+                print(
+                    Fore.RED + "Usage: python3 main.py --extract --<session_name>" + Style.RESET_ALL)
+                sys.exit(1)
+
+            self.session_name = sys.argv[2][2:]  # Remove the '--' prefix
+            chrome_data_dir = os.path.join(os.getcwd(), 'chrome-data')
+            session_path = os.path.join(chrome_data_dir, self.session_name)
+
+            if not os.path.exists(session_path):
+                print(
+                    Fore.RED + f"Session '{self.session_name}' does not exist" + Style.RESET_ALL)
+                sys.exit(1)
+
+            self.generate_chat_history()
+            self.quit()
+
+        # Normal menu flow
+        self.session_name = list_chrome_sessions()  # Only call this for menu flow
         while True:
             self.display()
             choice = input("Enter an option: ")
-            action = self.choices[choice]
+            action = self.choices.get(choice)
             if action:
                 action()
                 self.quit()
             else:
-                print(Fore.RED, choice, " is not a valide choice")
+                print(Fore.RED, choice, " is not a valid choice")
                 print(Style.RESET_ALL)
 
 
-m = Menu()
-m.run()
+if __name__ == "__main__":
+    m = Menu()
+    m.run()

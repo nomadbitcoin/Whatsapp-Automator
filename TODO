@@ -4,3 +4,9 @@
     - [ ] Chacar se uma transferência foi feita
 
 - [ ] Guardar informações de contato: Nome, Número e Tag.
+
+- [ ] passar para django? melhor edicao do db (migrations), sem perda de dados, melhor visualizacao painel admin
+- [ ] na leitura atual, mais nova pra mais velha, Se comecar a dar muito erro de download de attach, para a ja deixa como erro padrao
+- [ ] fix numero de telefone e nome pra quem nao eh contato salvo, eh inverso
+- [ ] fix loading infinito
+- [ ] leitura de arquivos em paralelo? ou assincrona
